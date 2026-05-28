@@ -7,6 +7,7 @@ EXECUTABLE_DIR="$APP_DIR/Contents/MacOS"
 RESOURCES_DIR="$APP_DIR/Contents/Resources"
 VENDOR_BIN_DIR="$ROOT_DIR/Vendor/bin"
 ICON_FILE="$ROOT_DIR/Assets/AppIcon.icns"
+THIRD_PARTY_NOTICES="$ROOT_DIR/THIRD_PARTY_NOTICES.md"
 
 cd "$ROOT_DIR"
 swift build -c release
@@ -17,6 +18,10 @@ cp ".build/release/Downlink" "$EXECUTABLE_DIR/Downlink"
 
 if [ -f "$ICON_FILE" ]; then
     cp "$ICON_FILE" "$RESOURCES_DIR/AppIcon.icns"
+fi
+
+if [ -f "$THIRD_PARTY_NOTICES" ]; then
+    cp "$THIRD_PARTY_NOTICES" "$RESOURCES_DIR/THIRD_PARTY_NOTICES.md"
 fi
 
 if [ -d "$VENDOR_BIN_DIR" ]; then

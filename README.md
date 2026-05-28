@@ -5,7 +5,7 @@
 <h1 align="center">Downlink</h1>
 
 <p align="center">
-  A clean native macOS app for saving videos and extracting audio with predictable filenames.
+  Download videos and audio from supported links with predictable filenames.
 </p>
 
 <p align="center">
@@ -16,9 +16,7 @@
   <a href="LICENSE">MIT License</a>
 </p>
 
-Downlink is a lightweight macOS downloader built with SwiftUI. Paste a link, choose a format and quality, then download media that you have permission to save. It uses `yt-dlp` for link support and `ffmpeg` for merging, remuxing, and audio conversion.
-
-Downlink does not bypass DRM, paywalls, private access, or platform restrictions.
+Downlink is a lightweight macOS downloader built with SwiftUI. Paste a supported link, choose a format and quality, then save video or audio with a clean filename. It uses `yt-dlp` for link support and `ffmpeg` for merging, remuxing, and audio conversion.
 
 ## Download
 
@@ -89,8 +87,8 @@ For a portable release, use standalone/static `yt-dlp` and `ffmpeg` binaries and
 
 ## Legal
 
-Only download media that you created, own, licensed, or otherwise have permission to save. Site extractors can change over time, and some content may be unavailable because it is private, protected, region-limited, or DRM-restricted.
+Only download media that you created, own, licensed, or otherwise have permission to save. Downlink does not bypass DRM, paywalls, private access, or platform restrictions. Site extractors can change over time, and some content may be unavailable because it is private, protected, region-limited, or DRM-restricted.
 
 ## License
 
-Downlink is released under the [MIT License](LICENSE).
+Downlink is released under the [MIT License](LICENSE). See [Third-Party Notices](THIRD_PARTY_NOTICES.md) for bundled tool licenses.
