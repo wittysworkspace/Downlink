@@ -37,7 +37,7 @@ The packaged release includes standalone `yt-dlp` and `ffmpeg`, so normal users 
 - Video formats: MP4, MKV, WEBM, MOV
 - Audio formats: MP3, M4A, WAV, FLAC, OPUS, AAC
 - Quality presets: 4K, 1440p, 1080p, 720p, 480p
-- Clean output names like `Kendrick Lamar - Not Like Us [4k].mp4`
+- Clean output names using the original title plus selected quality, like `Original title [1080p].mp4`
 - Optional subtitles, metadata, and artwork
 - English, Simplified Chinese, Traditional Chinese, and Thai interface languages
 
