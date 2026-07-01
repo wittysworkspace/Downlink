@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PYTHON_VENDOR_DIR="$SCRIPT_DIR/../python"
+
+if [ -d "$PYTHON_VENDOR_DIR" ]; then
+    export PYTHONPATH="$PYTHON_VENDOR_DIR${PYTHONPATH:+:$PYTHONPATH}"
+fi
+
+if [ -x /opt/homebrew/bin/python3 ]; then
+    exec /opt/homebrew/bin/python3 -m gallery_dl "$@"
+fi
+
+if [ -x /usr/local/bin/python3 ]; then
+    exec /usr/local/bin/python3 -m gallery_dl "$@"
+fi
+
+if command -v python3 >/dev/null 2>&1; then
+    exec python3 -m gallery_dl "$@"
+fi
+
+echo "python3 not found; install Python 3 to run gallery-dl" >&2
+exit 127

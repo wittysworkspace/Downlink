@@ -5,7 +5,7 @@
 <h1 align="center">Downlink</h1>
 
 <p align="center">
-  Download videos and audio from supported links with predictable filenames.
+  Download videos, audio, and image posts from supported links with predictable filenames.
 </p>
 
 <p align="center">
@@ -16,7 +16,7 @@
   <a href="LICENSE">MIT License</a>
 </p>
 
-Downlink is a lightweight macOS downloader built with SwiftUI. Paste a supported link, choose a format and quality, then save video or audio with a clean filename. It uses `yt-dlp` for link support and `ffmpeg` for merging, remuxing, and audio conversion.
+Downlink is a lightweight macOS downloader built with SwiftUI. Paste a supported link, choose video, audio, or image mode, then save media with a clean filename. It uses `yt-dlp` for link support, `ffmpeg` for merging, remuxing, and audio conversion, and `gallery-dl` support files for image extraction workflows.
 
 ## Download
 
@@ -24,18 +24,19 @@ Download the latest DMG from the release page:
 
 [Download Downlink for macOS](https://github.com/wittysworkspace/Downlink/releases/latest)
 
-The packaged release includes standalone `yt-dlp` and `ffmpeg`, so normal users do not need Homebrew or any command-line setup.
+The packaged release includes standalone `yt-dlp` and `ffmpeg`, plus bundled `gallery-dl` Python support files for image mode.
 
 ## Features
 
 - Native macOS interface designed for quick everyday use
 - Paste one or more links and automatically check whether they are available
 - See an estimated file size before downloading when the source provides one
-- Download video or extract audio
+- Download video, extract audio, or save image posts
 - Video formats: MP4, MKV, WEBM, MOV
 - Audio formats: MP3, M4A, WAV, FLAC, OPUS, AAC
+- Image mode saves discovered source images in their original image format when available
 - Quality presets: 4K, 1440p, 1080p, 720p, 480p
-- Clean output names using the original title plus selected quality, like `Original title [1080p].mp4`
+- Clean output names using the original title plus selected mode, like `Original title [1080p].mp4` or `Post title [Image].jpg`
 - Optional subtitles, metadata, and artwork
 - English, Simplified Chinese, Traditional Chinese, and Thai interface languages
 
@@ -75,6 +76,8 @@ The build script copies optional bundled tools from:
 ```text
 Vendor/bin/yt-dlp
 Vendor/bin/ffmpeg
+Vendor/bin/gallery-dl
+Vendor/python/
 ```
 
 into:
@@ -83,7 +86,7 @@ into:
 Downlink.app/Contents/Resources/bin/
 ```
 
-For a portable release, use standalone/static `yt-dlp` and `ffmpeg` binaries and test the packaged app on a clean Mac.
+For a portable release, use standalone/static `yt-dlp` and `ffmpeg` binaries, keep the bundled `gallery-dl` Python support files current, and test the packaged app on a clean Mac.
 
 ## Legal
 

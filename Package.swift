@@ -14,6 +14,10 @@ let package = Package(
         .executableTarget(
             name: "Downlink",
             path: "Sources/Downlink"
+        ),
+        .testTarget(
+            name: "DownlinkTests",
+            dependencies: ["Downlink"]
         )
     ]
 )

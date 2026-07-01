@@ -6,10 +6,30 @@ Downlink is distributed under the MIT License. Some release builds include third
 
 - Project: yt-dlp
 - Website: https://github.com/yt-dlp/yt-dlp
-- Version bundled in the current macOS release: 2026.03.17
+- Version bundled in the current macOS release: 2026.06.09
 - License: The Unlicense, with additional notices for bundled executable dependencies as described by the yt-dlp project
 - Source code: https://github.com/yt-dlp/yt-dlp
 - License file: https://github.com/yt-dlp/yt-dlp/blob/master/LICENSE
+
+## gallery-dl
+
+- Project: gallery-dl
+- Website: https://github.com/mikf123/gallery-dl
+- Version bundled in the current macOS release: 1.32.4
+- License: GPL-2.0
+- Source code: https://github.com/mikf123/gallery-dl
+- License file: https://github.com/mikf123/gallery-dl/blob/master/LICENSE
+
+## Bundled Python Support Packages
+
+Some macOS release builds include Python package files under `Contents/Resources/python/` so the bundled `gallery-dl` wrapper can find its Python modules without a Homebrew package install.
+
+- certifi 2026.06.17: MPL-2.0, https://github.com/certifi/python-certifi
+- charset-normalizer 3.4.7: MIT, https://github.com/jawah/charset_normalizer
+- chardet 7.4.3: 0BSD, https://github.com/chardet/chardet
+- idna 3.18: BSD-3-Clause, https://github.com/kjd/idna
+- requests 2.34.2: Apache-2.0, https://github.com/psf/requests
+- urllib3 2.7.0: MIT, https://github.com/urllib3/urllib3
 
 ## FFmpeg
 
@@ -59,4 +79,4 @@ The bundled FFmpeg binary reports the following build configuration:
 --enable-libtheora
 ```
 
-FFmpeg and yt-dlp are independent projects. Downlink is not affiliated with, endorsed by, or sponsored by those projects.
+FFmpeg, yt-dlp, gallery-dl, and the bundled Python packages are independent projects. Downlink is not affiliated with, endorsed by, or sponsored by those projects.

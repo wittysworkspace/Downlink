@@ -1,6 +1,13 @@
 .build/
 build/
+.private/
+*.cookies.txt
+cookies.txt
+*-cookies.txt
 .DS_Store
 **/.DS_Store
 Vendor/bin/*
 !Vendor/bin/.gitkeep
+!Vendor/bin/gallery-dl
+!Vendor/bin/yt-dlp
+Vendor/python/
