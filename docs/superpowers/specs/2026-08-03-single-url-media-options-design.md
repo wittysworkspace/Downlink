@@ -20,8 +20,6 @@ Make Downlink check one URL once, expose the output choices that can be fulfille
 - Prevent Image mode from showing source-video size as image download size.
 - Change the user-visible version to `26.0` and the internal build number to `2600`.
 
-The Mode-control VoiceOver issue found during QA is not part of this implementation request.
-
 ## User Flow
 
 1. The user selects Video, Audio, or Image mode.
