@@ -58,7 +58,7 @@
 - Modify implementation/tests only after a reproducing failure
 
 1. Exercise bundled yt-dlp and FFmpeg against short H.264, VP9, and AV1 samples.
-2. Validate MP4 and MOV with `ffprobe`: actual container, H.264/HEVC video, AAC audio, selected dimensions, frame rate, color metadata, title metadata, optional artwork, and subtitle sidecars.
+2. Validate MP4 and MOV with `ffprobe`: actual container, H.264/HEVC video, AAC audio, selected dimensions, frame rate, color metadata, title metadata, MP4 artwork, MOV's visibly disabled artwork control, and subtitle sidecars.
 3. Validate MKV with `ffprobe`: selected source video codec/dimensions unchanged and FLAC audio.
 4. Compare encoded video packet hashes before and after MKV processing to prove stream copy.
 5. Test cancellation and an induced conversion failure; confirm no partial final filename remains.

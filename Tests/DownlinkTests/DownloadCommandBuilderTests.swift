@@ -296,6 +296,21 @@ final class DownloadCommandBuilderTests: XCTestCase {
     }
 
     @MainActor
+    func testArtworkControlIsDisabledForMOVOnly() {
+        let model = DownloadModel()
+        model.kind = .video
+
+        model.videoFormat = .mp4
+        XCTAssertTrue(model.isArtworkControlEnabled)
+
+        model.videoFormat = .mkv
+        XCTAssertTrue(model.isArtworkControlEnabled)
+
+        model.videoFormat = .mov
+        XCTAssertFalse(model.isArtworkControlEnabled)
+    }
+
+    @MainActor
     func testDownloadModelShowsActivityWhileChecking() {
         let model = DownloadModel()
 
@@ -1362,6 +1377,31 @@ final class DownloadCommandBuilderTests: XCTestCase {
 
         XCTAssertTrue(arguments.contains("--embed-metadata"))
         XCTAssertTrue(arguments.contains("--embed-thumbnail"))
+    }
+
+    func testMOVDoesNotRequestUnsupportedArtworkEmbedding() {
+        let configuration = DownloadConfiguration(
+            kind: .video,
+            videoFormat: .mov,
+            audioFormat: .mp3,
+            quality: .p1080,
+            includeVideoAudio: true,
+            includeSubtitles: false,
+            embedArtwork: true,
+            cookieSource: .none,
+            cookieFilePath: "",
+            outputDirectory: "/tmp/downlink",
+            outputTemplate: "%(title)s [1080p].%(ext)s"
+        )
+
+        let arguments = DownloadCommandBuilder.arguments(
+            for: "https://example.com/video",
+            ffmpegPath: "/opt/homebrew/bin/ffmpeg",
+            configuration: configuration
+        )
+
+        XCTAssertTrue(arguments.contains("--embed-metadata"))
+        XCTAssertFalse(arguments.contains("--embed-thumbnail"))
     }
 
     func testVideoAlwaysEmbedsMetadataWhenArtworkIsOff() {

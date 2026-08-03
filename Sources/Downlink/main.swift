@@ -1627,7 +1627,7 @@ enum DownloadCommandBuilder {
         case .video:
             appendFasterSingleItemDownloadArguments(to: &args)
             args.append("--embed-metadata")
-            if configuration.embedArtwork {
+            if configuration.embedArtwork, configuration.videoFormat != .mov {
                 args.append("--embed-thumbnail")
             }
 
@@ -2525,6 +2525,10 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
 
     var isQualityControlEnabled: Bool {
         kind == .video && hasValidCheck && !availableVideoQualities.isEmpty
+    }
+
+    var isArtworkControlEnabled: Bool {
+        kind == .video && videoFormat != .mov
     }
 
     var hasCheckedOptions: Bool {
@@ -4273,7 +4277,12 @@ struct ContentView: View {
                     Toggle(model.language.metadata, isOn: .constant(true))
                         .disabled(true)
                     if model.kind == .video {
-                        Toggle(model.language.artwork, isOn: $model.embedArtwork)
+                        Toggle(
+                            model.language.artwork,
+                            isOn: model.isArtworkControlEnabled ? $model.embedArtwork : .constant(false)
+                        )
+                        .disabled(!model.isArtworkControlEnabled)
+                        .opacity(model.isArtworkControlEnabled ? 1 : 0.45)
                         Toggle(model.language.subtitles, isOn: $model.includeSubtitles)
                     } else {
                         Toggle(model.language.artwork, isOn: .constant(false))
@@ -5380,7 +5389,12 @@ struct RedesignedContentView: View {
     @ViewBuilder
     private var artworkToggle: some View {
         if model.kind == .video {
-            Toggle(model.language.artwork, isOn: $model.embedArtwork)
+            Toggle(
+                model.language.artwork,
+                isOn: model.isArtworkControlEnabled ? $model.embedArtwork : .constant(false)
+            )
+            .disabled(!model.isArtworkControlEnabled)
+            .opacity(model.isArtworkControlEnabled ? 1 : 0.45)
         } else {
             Toggle(model.language.artwork, isOn: .constant(false))
                 .disabled(true)

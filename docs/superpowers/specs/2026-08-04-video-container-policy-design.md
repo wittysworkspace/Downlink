@@ -28,11 +28,11 @@ Users choose resolution and container, not codec. Downlink selects the codec wor
 For the selected resolution, MP4 and MOV choose the same highest-bitrate usable source video and the same highest-bitrate available audio source. They then produce one of these codec combinations:
 
 1. **H.264/HEVC + AAC** when the selected source video is already compatible. Video is copied without re-encoding.
-2. **HEVC + AAC** when the selected source video is VP9 or AV1. Video is transcoded at the same dimensions and frame rate using bundled FFmpeg. VideoToolbox is configured to prioritize quality, enable spatial adaptive quantization when available, and use a target bitrate equal to the greater of 1.5 times the reported source video bitrate or the resolution floor: 20 Mbps at 2160p and above, 12 Mbps at 1440p, 8 Mbps at 1080p, and 5 Mbps below 1080p. Bundled `libx265` at CRF 18 is the slower fallback if hardware HEVC encoding is unavailable.
+2. **HEVC + AAC** when the selected source video is VP9 or AV1. Video is transcoded at the same dimensions and frame rate using bundled FFmpeg. VideoToolbox is configured to prioritize quality, enable spatial adaptive quantization when available, allow Apple's software encoder path, and use a target bitrate equal to the greater of 1.5 times the reported source video bitrate or the resolution floor: 20 Mbps at 2160p and above, 12 Mbps at 1440p, 8 Mbps at 1080p, and 5 Mbps below 1080p. If VideoToolbox cannot encode the selected source, the app reports the conversion failure rather than silently changing quality.
 
 AAC source audio is copied when the target container accepts it safely. Opus or another incompatible stereo audio codec is converted to AAC-LC at 320 kbps while preserving its sample rate and channel layout. HEVC uses the `hvc1` tag in both containers for Apple compatibility.
 
-The output retains the selected dimensions, aspect ratio, frame rate, color description, metadata, optional artwork, and requested subtitles. MP4 and MOV may differ slightly in file size because of container overhead, but their source selection, encoded video quality, audio quality, and visible result must be equivalent.
+The output retains the selected dimensions, aspect ratio, frame rate, color description, metadata, and requested subtitles. MP4 supports optional embedded artwork. Genuine QuickTime MOV does not reliably retain the attached-picture artwork written by yt-dlp/FFmpeg, so the artwork checkbox is visibly disabled for MOV rather than claiming success. MP4 and MOV may differ slightly in file size because of container overhead, but their source selection, encoded video quality, audio quality, and visible result must otherwise be equivalent.
 
 Direct tests with the bundled FFmpeg confirm that genuine MOV files can contain both supported output combinations: H.264/AAC and HEVC/AAC.
 
@@ -67,7 +67,7 @@ Cancellation stops download and conversion, removes incomplete temporary output,
 - MKV prioritizes fidelity to the selected source video for DaVinci Resolve.
 - All three containers expose the same usable resolutions after Check.
 - Audio-only and image modes are unchanged.
-- Metadata, artwork, and subtitle controls retain the behavior already approved for release 26.0.
+- Metadata and subtitle controls retain the behavior already approved for release 26.0. Artwork remains available for MP4 and MKV and is disabled for genuine MOV because E2E verification showed that its attached artwork is discarded.
 
 ## Selection and Command Model
 
@@ -86,7 +86,7 @@ Temporary download and conversion files use collision-safe names in the destinat
 The app provides actionable localized errors for:
 
 - no usable stream at the selected resolution;
-- HEVC hardware encoder unavailable and software fallback failure;
+- VideoToolbox hardware and allowed software encoding paths unavailable;
 - insufficient disk space or unwritable destination;
 - MP4, MOV, or MKV muxing rejected by FFmpeg;
 - download, merge, metadata, artwork, subtitle, audio conversion, or video conversion failure;
@@ -104,13 +104,13 @@ No failure may leave a zero-byte or partially converted file with the intended f
 - MP4 and MOV select identical source format IDs and processing policies for the same resolution.
 - Compatible MP4/MOV video is not re-encoded unnecessarily.
 - MKV selects the highest-bitrate video at the requested resolution, stream-copies video, and outputs FLAC audio.
-- Command tests cover metadata, artwork, subtitles, cancellation, timeouts, duplicate names, fallback encoding, and failed-conversion cleanup.
+- Command tests cover metadata, container-aware artwork behavior, subtitles, cancellation, timeouts, duplicate names, software encoding allowance, and failed-conversion cleanup.
 - The complete existing test suite passes.
 
 ### End-to-end tests
 
 - Download real H.264, VP9, and AV1 samples at multiple resolutions into MP4, MOV, and MKV.
-- Use `ffprobe` to verify the actual container, codec, dimensions, frame rate, audio, metadata, artwork, subtitles, and final filename.
+- Use `ffprobe` to verify the actual container, codec, dimensions, frame rate, audio, metadata, supported artwork behavior, subtitles, and final filename.
 - Confirm VP9/AV1 sources become HEVC/AAC in MP4 and MOV without a resolution or frame-rate drop.
 - Confirm MKV video matches the selected source codec and is not re-encoded; confirm its audio is FLAC.
 - Verify MP4 and MOV with Quick Look and QuickTime Player.
