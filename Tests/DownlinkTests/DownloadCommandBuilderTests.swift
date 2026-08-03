@@ -1052,6 +1052,175 @@ final class DownloadCommandBuilderTests: XCTestCase {
         XCTAssertEqual(arguments[formatIndex + 1], "v1080+a-best")
     }
 
+    func testVP94KMP4UsesHEVCAndAACPostProcessing() throws {
+        var configuration = DownloadConfiguration(
+            kind: .video,
+            videoFormat: .mp4,
+            audioFormat: .mp3,
+            quality: .p2160,
+            includeVideoAudio: true,
+            includeSubtitles: false,
+            embedArtwork: false,
+            cookieSource: .none,
+            cookieFilePath: "",
+            outputDirectory: "/tmp/downlink",
+            outputTemplate: "%(title)s [2160p].%(ext)s"
+        )
+        configuration.selectedVideoFormatSelector = "vp9+opus"
+        configuration.selectedVideoProcessingPlan = VideoProcessingPlan(
+            container: .mp4,
+            videoAction: .hevc(targetBitrateKbps: 20_000),
+            audioAction: .aac(bitRateKbps: 320)
+        )
+
+        let arguments = DownloadCommandBuilder.arguments(
+            for: "https://example.com/video",
+            ffmpegPath: "/opt/homebrew/bin/ffmpeg",
+            configuration: configuration
+        )
+
+        let mergeIndex = try XCTUnwrap(arguments.firstIndex(of: "--merge-output-format"))
+        let recodeIndex = try XCTUnwrap(arguments.firstIndex(of: "--recode-video"))
+        let postprocessorIndex = try XCTUnwrap(arguments.firstIndex(of: "--postprocessor-args"))
+        let postprocessorArguments = arguments[postprocessorIndex + 1]
+
+        XCTAssertEqual(arguments[mergeIndex + 1], "mkv")
+        XCTAssertEqual(arguments[recodeIndex + 1], "mp4")
+        XCTAssertTrue(postprocessorArguments.contains("-c:v hevc_videotoolbox"))
+        XCTAssertTrue(postprocessorArguments.contains("-b:v 20000k"))
+        XCTAssertTrue(postprocessorArguments.contains("-tag:v hvc1"))
+        XCTAssertTrue(postprocessorArguments.contains("-c:a aac"))
+        XCTAssertTrue(postprocessorArguments.contains("-b:a 320k"))
+        XCTAssertFalse(arguments.contains("--remux-video"), "yt-dlp ignores remux when recode is present and emits a warning")
+    }
+
+    func testVP94KMOVUsesTheSameHEVCAndAACPolicyAsMP4() throws {
+        var configuration = makeVideoConfiguration(format: .mov)
+        configuration.selectedVideoFormatSelector = "vp9+opus"
+        configuration.selectedVideoProcessingPlan = VideoProcessingPlan(
+            container: .mov,
+            videoAction: .hevc(targetBitrateKbps: 20_000),
+            audioAction: .aac(bitRateKbps: 320)
+        )
+
+        let arguments = DownloadCommandBuilder.arguments(
+            for: "https://example.com/video",
+            ffmpegPath: "/opt/homebrew/bin/ffmpeg",
+            configuration: configuration
+        )
+
+        let mergeIndex = try XCTUnwrap(arguments.firstIndex(of: "--merge-output-format"))
+        let recodeIndex = try XCTUnwrap(arguments.firstIndex(of: "--recode-video"))
+        let postprocessorIndex = try XCTUnwrap(arguments.firstIndex(of: "--postprocessor-args"))
+        XCTAssertEqual(arguments[mergeIndex + 1], "mkv")
+        XCTAssertEqual(arguments[recodeIndex + 1], "mov")
+        XCTAssertTrue(arguments[postprocessorIndex + 1].contains("-c:v hevc_videotoolbox"))
+        XCTAssertTrue(arguments[postprocessorIndex + 1].contains("-c:a aac"))
+    }
+
+    func testCompatibleH264AndAACUseDirectRemuxWithoutReencoding() {
+        var configuration = makeVideoConfiguration(format: .mp4)
+        configuration.selectedVideoProcessingPlan = VideoProcessingPlan(
+            container: .mp4,
+            videoAction: .copy,
+            audioAction: .copy
+        )
+
+        let arguments = DownloadCommandBuilder.arguments(
+            for: "https://example.com/video",
+            ffmpegPath: "/opt/homebrew/bin/ffmpeg",
+            configuration: configuration
+        )
+
+        XCTAssertTrue(arguments.contains("--merge-output-format"))
+        XCTAssertTrue(arguments.contains("--remux-video"))
+        XCTAssertFalse(arguments.contains("--recode-video"))
+        XCTAssertFalse(arguments.contains("--postprocessor-args"))
+    }
+
+    func testIncompatibleAudioIsConvertedWithoutReencodingCompatibleVideo() throws {
+        var configuration = makeVideoConfiguration(format: .mp4)
+        configuration.selectedVideoProcessingPlan = VideoProcessingPlan(
+            container: .mp4,
+            videoAction: .copy,
+            audioAction: .aac(bitRateKbps: 320)
+        )
+
+        let arguments = DownloadCommandBuilder.arguments(
+            for: "https://example.com/video",
+            ffmpegPath: "/opt/homebrew/bin/ffmpeg",
+            configuration: configuration
+        )
+
+        let postprocessorIndex = try XCTUnwrap(arguments.firstIndex(of: "--postprocessor-args"))
+        let postprocessorArguments = arguments[postprocessorIndex + 1]
+        XCTAssertTrue(postprocessorArguments.contains("-c:v copy"))
+        XCTAssertTrue(postprocessorArguments.contains("-c:a aac"))
+        XCTAssertTrue(postprocessorArguments.contains("-b:a 320k"))
+    }
+
+    func testMKVPreservesSourceVideoAndConvertsAudioToFLAC() throws {
+        var configuration = makeVideoConfiguration(format: .mkv)
+        configuration.selectedVideoProcessingPlan = VideoProcessingPlan(
+            container: .mkv,
+            videoAction: .copy,
+            audioAction: .flac
+        )
+
+        let arguments = DownloadCommandBuilder.arguments(
+            for: "https://example.com/video",
+            ffmpegPath: "/opt/homebrew/bin/ffmpeg",
+            configuration: configuration
+        )
+
+        let mergeIndex = try XCTUnwrap(arguments.firstIndex(of: "--merge-output-format"))
+        let recodeIndex = try XCTUnwrap(arguments.firstIndex(of: "--recode-video"))
+        let postprocessorIndex = try XCTUnwrap(arguments.firstIndex(of: "--postprocessor-args"))
+        XCTAssertEqual(arguments[mergeIndex + 1], "mp4")
+        XCTAssertEqual(arguments[recodeIndex + 1], "mkv")
+        XCTAssertTrue(arguments[postprocessorIndex + 1].contains("-c:v copy"))
+        XCTAssertTrue(arguments[postprocessorIndex + 1].contains("-c:a flac"))
+    }
+
+    func testVideoOnlyConversionDropsAudioExplicitly() throws {
+        var configuration = makeVideoConfiguration(format: .mp4, includeAudio: false)
+        configuration.selectedVideoProcessingPlan = VideoProcessingPlan(
+            container: .mp4,
+            videoAction: .hevc(targetBitrateKbps: 8_000),
+            audioAction: .none
+        )
+
+        let arguments = DownloadCommandBuilder.arguments(
+            for: "https://example.com/video",
+            ffmpegPath: "/opt/homebrew/bin/ffmpeg",
+            configuration: configuration
+        )
+
+        let postprocessorIndex = try XCTUnwrap(arguments.firstIndex(of: "--postprocessor-args"))
+        let postprocessorArguments = arguments[postprocessorIndex + 1]
+        XCTAssertTrue(postprocessorArguments.contains("-an"))
+        XCTAssertFalse(postprocessorArguments.contains("-c:a"))
+    }
+
+    private func makeVideoConfiguration(
+        format: VideoFormat,
+        includeAudio: Bool = true
+    ) -> DownloadConfiguration {
+        DownloadConfiguration(
+            kind: .video,
+            videoFormat: format,
+            audioFormat: .mp3,
+            quality: .p2160,
+            includeVideoAudio: includeAudio,
+            includeSubtitles: false,
+            embedArtwork: false,
+            cookieSource: .none,
+            cookieFilePath: "",
+            outputDirectory: "/tmp/downlink",
+            outputTemplate: "%(title)s [2160p].%(ext)s"
+        )
+    }
+
     func testAudioDownloadAlwaysRequestsBestAudio() throws {
         let configuration = DownloadConfiguration(
             kind: .audio,

@@ -1595,6 +1595,7 @@ struct DownloadConfiguration: Sendable, Equatable {
     let outputDirectory: String
     let outputTemplate: String
     var selectedVideoFormatSelector: String? = nil
+    var selectedVideoProcessingPlan: VideoProcessingPlan? = nil
     var selectedAudioFormatSelector: String? = nil
 }
 
@@ -1631,12 +1632,7 @@ enum DownloadCommandBuilder {
             let selector = configuration.selectedVideoFormatSelector
                 ?? (configuration.includeVideoAudio ? configuration.quality.formatSelector : configuration.quality.videoOnlyFormatSelector)
             args.append(contentsOf: ["--format", selector])
-            if let outputFormat = configuration.videoFormat.argumentValue {
-                args.append("--merge-output-format")
-                args.append(outputFormat)
-                args.append("--remux-video")
-                args.append(outputFormat)
-            }
+            appendVideoProcessingArguments(to: &args, configuration: configuration)
         case .audio:
             appendFasterSingleItemDownloadArguments(to: &args)
             args.append("--embed-metadata")
@@ -1661,6 +1657,78 @@ enum DownloadCommandBuilder {
         args.append("--no-playlist")
         args.append("--concurrent-fragments")
         args.append("8")
+    }
+
+    private static func appendVideoProcessingArguments(
+        to args: inout [String],
+        configuration: DownloadConfiguration
+    ) {
+        guard let finalFormat = configuration.videoFormat.argumentValue else { return }
+        guard let plan = configuration.selectedVideoProcessingPlan else {
+            args.append(contentsOf: [
+                "--merge-output-format", finalFormat,
+                "--remux-video", finalFormat
+            ])
+            return
+        }
+
+        let requiresConversion: Bool
+        switch (plan.videoAction, plan.audioAction) {
+        case (.copy, .copy), (.copy, .none):
+            requiresConversion = false
+        default:
+            requiresConversion = true
+        }
+
+        guard requiresConversion else {
+            args.append(contentsOf: [
+                "--merge-output-format", finalFormat,
+                "--remux-video", finalFormat
+            ])
+            return
+        }
+
+        let intermediateFormat = plan.container == .mkv ? "mp4" : "mkv"
+        args.append(contentsOf: [
+            "--merge-output-format", intermediateFormat,
+            "--recode-video", finalFormat,
+            "--postprocessor-args", "VideoConvertor+ffmpeg_o:\(ffmpegVideoConversionArguments(for: plan))"
+        ])
+    }
+
+    private static func ffmpegVideoConversionArguments(for plan: VideoProcessingPlan) -> String {
+        var arguments: [String] = []
+
+        switch plan.videoAction {
+        case .copy:
+            arguments.append(contentsOf: ["-c:v", "copy"])
+        case .hevc(let targetBitrateKbps):
+            let maximumBitrateKbps = Int((Double(targetBitrateKbps) * 1.4).rounded(.up))
+            let bufferSizeKbps = targetBitrateKbps * 2
+            arguments.append(contentsOf: [
+                "-c:v", "hevc_videotoolbox",
+                "-allow_sw", "1",
+                "-prio_speed", "0",
+                "-spatial_aq", "1",
+                "-b:v", "\(targetBitrateKbps)k",
+                "-maxrate", "\(maximumBitrateKbps)k",
+                "-bufsize", "\(bufferSizeKbps)k",
+                "-tag:v", "hvc1"
+            ])
+        }
+
+        switch plan.audioAction {
+        case .none:
+            arguments.append("-an")
+        case .copy:
+            arguments.append(contentsOf: ["-c:a", "copy"])
+        case .aac(let bitRateKbps):
+            arguments.append(contentsOf: ["-c:a", "aac", "-b:a", "\(bitRateKbps)k"])
+        case .flac:
+            arguments.append(contentsOf: ["-c:a", "flac"])
+        }
+
+        return arguments.joined(separator: " ")
     }
 
     static func scanArguments(for url: String, configuration: DownloadConfiguration) -> [String] {
@@ -3203,6 +3271,7 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
         )
         if kind == .video {
             configuration.selectedVideoFormatSelector = selectedVideoStreamSelection?.selector
+            configuration.selectedVideoProcessingPlan = selectedVideoStreamSelection?.processingPlan
         } else if kind == .audio {
             configuration.selectedAudioFormatSelector = checkedMediaFormatCatalog?.checkedAudioSelection?.formatID
         }
