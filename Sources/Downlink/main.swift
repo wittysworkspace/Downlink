@@ -314,6 +314,15 @@ enum AppLanguage: String, CaseIterable, Identifiable {
         }
     }
 
+    var converting: String {
+        switch self {
+        case .english: return "Converting"
+        case .simplifiedChinese: return "转换中"
+        case .traditionalChinese: return "轉換中"
+        case .thai: return "กำลังแปลงไฟล์"
+        }
+    }
+
     var finished: String {
         switch self {
         case .english: return "Finished"
@@ -2386,6 +2395,12 @@ struct DownloadJob: Sendable {
     let total: Int
 }
 
+enum DownloadLogPhase {
+    static func isConverting(_ text: String) -> Bool {
+        text.contains("[VideoConvertor]") && text.contains("Converting video")
+    }
+}
+
 @MainActor
 final class DownloadModel: ObservableObject, @unchecked Sendable {
     private enum DefaultsKey {
@@ -2460,6 +2475,7 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
         let exactStatuses: [(old: String, new: String)] = [
             (oldLanguage.ready, newLanguage.ready),
             (oldLanguage.downloading, newLanguage.downloading),
+            (oldLanguage.converting, newLanguage.converting),
             (oldLanguage.finished, newLanguage.finished),
             (oldLanguage.cancelled, newLanguage.cancelled),
             (oldLanguage.missingTools, newLanguage.missingTools),
@@ -3324,13 +3340,13 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
                 let data = handle.availableData
                 if data.isEmpty { break }
                 guard let text = String(data: data, encoding: .utf8), !text.isEmpty else { continue }
-                await appendLog(text)
+                await consumeDownloaderOutput(text)
             }
             process.waitUntilExit()
 
             let remainingData = handle.readDataToEndOfFile()
             if let remainingText = String(data: remainingData, encoding: .utf8), !remainingText.isEmpty {
-                await appendLog(remainingText)
+                await consumeDownloaderOutput(remainingText)
             }
 
             let stopReason = controller.complete()
@@ -3437,6 +3453,16 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
     private func appendLog(_ text: String) {
         logText += text
         updateProgress(from: text)
+    }
+
+    func consumeDownloaderOutput(_ text: String) {
+        appendLog(text)
+        if DownloadLogPhase.isConverting(text), isRunning, !isCancellationRequested {
+            status = language.converting
+            progressFraction = min(progressFraction, 0.98)
+            speedLabel = "0 KB/s"
+            etaLabel = "--"
+        }
     }
 
     private func updateProgress(from text: String) {

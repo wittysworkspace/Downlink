@@ -315,6 +315,41 @@ final class DownloadCommandBuilderTests: XCTestCase {
     }
 
     @MainActor
+    func testChangingLanguagePreservesConvertingStatus() {
+        let model = DownloadModel()
+        model.status = AppLanguage.english.converting
+
+        model.language = .thai
+
+        XCTAssertEqual(model.status, AppLanguage.thai.converting)
+    }
+
+    func testVideoConvertorOutputIsRecognizedAsConversionPhase() {
+        XCTAssertTrue(
+            DownloadLogPhase.isConverting(
+                "[VideoConvertor] Converting video from mkv to mp4; Destination: Clip.mp4"
+            )
+        )
+        XCTAssertFalse(DownloadLogPhase.isConverting("[download] 100% of 10.00MiB"))
+        XCTAssertFalse(DownloadLogPhase.isConverting("[Merger] Merging formats into Clip.mkv"))
+    }
+
+    @MainActor
+    func testConversionOutputUpdatesVisibleStatusAndKeepsProgressBelowFinished() {
+        let model = DownloadModel()
+        model.isRunning = true
+        model.progressFraction = 1
+
+        model.consumeDownloaderOutput(
+            "[download] 100% of 10.00MiB\n[VideoConvertor] Converting video from mkv to mp4\n"
+        )
+
+        XCTAssertEqual(model.status, model.language.converting)
+        XCTAssertEqual(model.progressFraction, 0.98)
+        XCTAssertTrue(model.logText.contains("[VideoConvertor]"))
+    }
+
+    @MainActor
     func testChangingLanguagePreservesCancelledAndErrorStatuses() {
         let model = DownloadModel()
         model.status = AppLanguage.english.cancelled
