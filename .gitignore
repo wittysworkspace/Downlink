@@ -1,5 +1,6 @@
 .build/
 build/
+.worktrees/
 .private/
 *.cookies.txt
 cookies.txt
