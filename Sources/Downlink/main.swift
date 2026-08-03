@@ -1606,6 +1606,7 @@ struct DownloadConfiguration: Sendable, Equatable {
     var selectedVideoFormatSelector: String? = nil
     var selectedVideoProcessingPlan: VideoProcessingPlan? = nil
     var selectedAudioFormatSelector: String? = nil
+    var temporaryDirectory: String? = nil
 }
 
 enum DownloadCommandBuilder {
@@ -1620,6 +1621,12 @@ enum DownloadCommandBuilder {
             "--trim-filenames", "180",
             "--output", configuration.outputTemplate
         ]
+
+        if let temporaryDirectory = configuration.temporaryDirectory?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !temporaryDirectory.isEmpty {
+            args.append(contentsOf: ["--paths", "temp:\(temporaryDirectory)"])
+        }
 
         appendCookieArguments(to: &args, configuration: configuration, url: url)
 
@@ -2391,8 +2398,32 @@ struct DownloadJob: Sendable {
     let kind: DownloadKind
     let arguments: [String]
     let imageItems: [ImageDownloadItem]
+    let temporaryDirectory: String?
     let index: Int
     let total: Int
+}
+
+enum DownloadTemporaryDirectory {
+    private static var rootURL: URL {
+        FileManager.default.temporaryDirectory.standardizedFileURL
+    }
+
+    static func make() -> String {
+        rootURL
+            .appendingPathComponent("Downlink-\(UUID().uuidString)", isDirectory: true)
+            .path
+    }
+
+    static func isManaged(_ path: String) -> Bool {
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        return url.deletingLastPathComponent() == rootURL
+            && url.lastPathComponent.hasPrefix("Downlink-")
+    }
+
+    static func remove(_ path: String?) {
+        guard let path, isManaged(path) else { return }
+        try? FileManager.default.removeItem(atPath: path)
+    }
 }
 
 enum DownloadLogPhase {
@@ -3014,13 +3045,17 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
         appendLog("\n\(language.downloading) \(parsedURLs.count) item(s)...\n")
 
         let jobs = parsedURLs.enumerated().map { offset, url in
-            DownloadJob(
+            let temporaryDirectory = kind == .image ? nil : DownloadTemporaryDirectory.make()
+            var jobConfiguration = downloadConfiguration
+            jobConfiguration.temporaryDirectory = temporaryDirectory
+            return DownloadJob(
                 url: url,
                 kind: kind,
                 arguments: kind == .image
-                    ? DownloadCommandBuilder.scanArguments(for: url, configuration: downloadConfiguration)
-                    : DownloadCommandBuilder.arguments(for: url, ffmpegPath: ffmpegPath, configuration: downloadConfiguration),
+                    ? DownloadCommandBuilder.scanArguments(for: url, configuration: jobConfiguration)
+                    : DownloadCommandBuilder.arguments(for: url, ffmpegPath: ffmpegPath, configuration: jobConfiguration),
                 imageItems: kind == .image ? checkedImageItemsByURL[DownloadCommandBuilder.normalizedURLString(url), default: []] : [],
+                temporaryDirectory: temporaryDirectory,
                 index: offset + 1,
                 total: parsedURLs.count
             )
@@ -3324,6 +3359,9 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
     }
 
     private nonisolated func runSingleDownload(ytDlpPath: String, job: DownloadJob) async {
+        defer {
+            DownloadTemporaryDirectory.remove(job.temporaryDirectory)
+        }
         guard await beginJob(job) else { return }
 
         let process = Process()

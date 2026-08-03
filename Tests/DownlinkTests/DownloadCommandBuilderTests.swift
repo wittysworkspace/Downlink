@@ -728,6 +728,37 @@ final class DownloadCommandBuilderTests: XCTestCase {
         XCTAssertTrue(arguments.contains("--no-update"))
     }
 
+    func testDownloadUsesIsolatedTemporaryDirectory() {
+        var configuration = makeVideoConfiguration(format: .mp4)
+        configuration.temporaryDirectory = "/private/tmp/Downlink-test-job"
+
+        let arguments = DownloadCommandBuilder.arguments(
+            for: "https://example.com/video",
+            ffmpegPath: "/opt/homebrew/bin/ffmpeg",
+            configuration: configuration
+        )
+
+        XCTAssertTrue(
+            zip(arguments, arguments.dropFirst()).contains { argument, value in
+                argument == "--paths" && value == "temp:/private/tmp/Downlink-test-job"
+            }
+        )
+    }
+
+    func testTemporaryDirectoryOnlyManagesItsOwnJobPaths() throws {
+        let managedPath = DownloadTemporaryDirectory.make()
+        try FileManager.default.createDirectory(
+            atPath: managedPath,
+            withIntermediateDirectories: true
+        )
+
+        XCTAssertTrue(DownloadTemporaryDirectory.isManaged(managedPath))
+        XCTAssertFalse(DownloadTemporaryDirectory.isManaged(FileManager.default.temporaryDirectory.path))
+
+        DownloadTemporaryDirectory.remove(managedPath)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: managedPath))
+    }
+
     func testScanArgumentsDisableYtDlpUpdateWarnings() {
         let configuration = DownloadConfiguration(
             kind: .video,

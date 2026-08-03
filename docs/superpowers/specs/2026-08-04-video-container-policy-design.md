@@ -79,7 +79,7 @@ The checked media catalog keeps codec and bitrate information for every source s
 
 Command construction consumes this policy rather than inferring compatibility again. Quality discovery, source selection, container selection, and post-processing remain independently testable.
 
-Temporary download and conversion files use collision-safe names in the destination filesystem. Only a fully validated result is moved to the final user-visible filename.
+Each job uses a unique app-managed directory under the macOS temporary directory for downloads, merging, and conversion intermediates. yt-dlp moves only a successfully completed result into the user's destination, and the app removes its managed temporary directory after success, failure, or cancellation.
 
 ## Error Handling
 
