@@ -792,7 +792,7 @@ final class DownloadCommandBuilderTests: XCTestCase {
         XCTAssertEqual(selection.estimatedBytes, 22_000_000)
     }
 
-    func testMOVSelectionUsesContainerCompatibleVideoAndAudioCodecs() throws {
+    func testMP4AndMOVSelectTheSameHighestBitrateSourceStreams() throws {
         let catalog = MediaFormatCatalog.make(metadata: [
             "formats": [
                 ["format_id": "vp9-high", "height": 1080, "vcodec": "vp9", "acodec": "none", "tbr": 4_000],
@@ -807,18 +807,19 @@ final class DownloadCommandBuilderTests: XCTestCase {
             includeAudio: true,
             outputFormat: .mov
         ))
-        let mkvSelection = try XCTUnwrap(catalog.videoSelection(
+        let mp4Selection = try XCTUnwrap(catalog.videoSelection(
             height: 1080,
             includeAudio: true,
-            outputFormat: .mkv
+            outputFormat: .mp4
         ))
 
-        XCTAssertEqual(movSelection.selector, "h264-compatible+aac-compatible")
-        XCTAssertEqual(mkvSelection.selector, "vp9-high+opus-high")
+        XCTAssertEqual(movSelection.selector, "vp9-high+opus-high")
+        XCTAssertEqual(mp4Selection.selector, movSelection.selector)
         XCTAssertEqual(catalog.compatibleVideoQualities(outputFormat: .mov, includeAudio: true).map(\.height), [1080])
+        XCTAssertEqual(catalog.compatibleVideoQualities(outputFormat: .mp4, includeAudio: true).map(\.height), [1080])
     }
 
-    func testMOVQualityIsHiddenWhenNoCompatibleStreamExists() {
+    func testMOVKeepsVP94KQualitySelectableForConversion() {
         let catalog = MediaFormatCatalog.make(metadata: [
             "formats": [
                 ["format_id": "vp9", "height": 2160, "vcodec": "vp9", "acodec": "none", "tbr": 8_000],
@@ -826,10 +827,13 @@ final class DownloadCommandBuilderTests: XCTestCase {
             ]
         ])
 
-        XCTAssertTrue(catalog.compatibleVideoQualities(outputFormat: .mov, includeAudio: true).isEmpty)
+        XCTAssertEqual(
+            catalog.compatibleVideoQualities(outputFormat: .mov, includeAudio: true).map(\.height),
+            [2160]
+        )
     }
 
-    func testMP4SelectionOnlyOffersQuickTimeCompatibleCodecs() throws {
+    func testMP4KeepsVP94KQualityAndSelectsHighestBitrateStreamsForConversion() throws {
         let catalog = MediaFormatCatalog.make(metadata: [
             "formats": [
                 ["format_id": "vp9-4k", "height": 2160, "vcodec": "vp9", "acodec": "none", "tbr": 8_000],
@@ -841,15 +845,39 @@ final class DownloadCommandBuilderTests: XCTestCase {
         ])
 
         let selection = try XCTUnwrap(catalog.videoSelection(
-            height: 1080,
+            height: 2160,
             includeAudio: true,
             outputFormat: .mp4
         ))
 
-        XCTAssertEqual(selection.selector, "h264-1080+aac-compatible")
+        XCTAssertEqual(selection.selector, "vp9-4k+opus-high")
         XCTAssertEqual(
             catalog.compatibleVideoQualities(outputFormat: .mp4, includeAudio: true).map(\.height),
-            [1080]
+            [2160, 1080]
+        )
+    }
+
+    func testMP4VP94KSelectionRequestsHEVCAndAACAtQualityFloor() throws {
+        let catalog = MediaFormatCatalog.make(metadata: [
+            "formats": [
+                ["format_id": "vp9-4k", "height": 2160, "vcodec": "vp9", "acodec": "none", "tbr": 8_000],
+                ["format_id": "opus", "vcodec": "none", "acodec": "opus", "abr": 192]
+            ]
+        ])
+
+        let selection = try XCTUnwrap(catalog.videoSelection(
+            height: 2160,
+            includeAudio: true,
+            outputFormat: .mp4
+        ))
+
+        XCTAssertEqual(
+            selection.processingPlan,
+            VideoProcessingPlan(
+                container: .mp4,
+                videoAction: .hevc(targetBitrateKbps: 20_000),
+                audioAction: .aac(bitRateKbps: 320)
+            )
         )
     }
 

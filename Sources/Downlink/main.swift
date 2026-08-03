@@ -843,6 +843,25 @@ struct VideoStreamSelection: Equatable, Sendable {
     let audioFormatID: String?
     let selector: String
     let estimatedBytes: Int64?
+    let processingPlan: VideoProcessingPlan
+}
+
+struct VideoProcessingPlan: Equatable, Sendable {
+    enum VideoAction: Equatable, Sendable {
+        case copy
+        case hevc(targetBitrateKbps: Int)
+    }
+
+    enum AudioAction: Equatable, Sendable {
+        case none
+        case copy
+        case aac(bitRateKbps: Int)
+        case flac
+    }
+
+    let container: VideoFormat
+    let videoAction: VideoAction
+    let audioAction: AudioAction
 }
 
 struct AudioStreamSelection: Equatable, Sendable {
@@ -931,13 +950,10 @@ struct MediaFormatCatalog: Equatable, Sendable {
         let allVideoCandidates = formats.filter { format in
             format.hasVideo
                 && (height == nil || format.height == height)
-                && supportsVideo(format, in: outputFormat)
         }
         let videoOnlyCandidates = allVideoCandidates.filter { !$0.hasAudio }
-        let combinedCandidates = allVideoCandidates.filter {
-            $0.hasAudio && supportsAudio($0, in: outputFormat)
-        }
-        let audio = bestAudioOnlyFormat(in: outputFormat)
+        let combinedCandidates = allVideoCandidates.filter(\.hasAudio)
+        let audio = bestAudioOnlyFormat
         let videoCandidates: [MediaFormat]
         if includeAudio {
             if audio != nil, !videoOnlyCandidates.isEmpty {
@@ -966,17 +982,26 @@ struct MediaFormatCatalog: Equatable, Sendable {
             return nil
         }
 
+        let selectedAudio = includeAudio && !video.hasAudio ? audio : nil
+        let sourceAudioCodec = video.hasAudio ? video.audioCodec : selectedAudio?.audioCodec
+        let processingPlan = processingPlan(
+            outputFormat: outputFormat,
+            video: video,
+            sourceAudioCodec: sourceAudioCodec,
+            includeAudio: includeAudio
+        )
+
         guard includeAudio, !video.hasAudio else {
             return VideoStreamSelection(
                 height: video.height ?? height,
                 videoFormatID: video.id,
                 audioFormatID: nil,
                 selector: video.id,
-                estimatedBytes: video.bytes
+                estimatedBytes: video.bytes,
+                processingPlan: processingPlan
             )
         }
 
-        let selectedAudio = includeAudio && !video.hasAudio ? audio : nil
         let estimatedBytes: Int64?
         if let videoBytes = video.bytes, let audioBytes = selectedAudio?.bytes {
             estimatedBytes = videoBytes + audioBytes
@@ -991,7 +1016,8 @@ struct MediaFormatCatalog: Equatable, Sendable {
             videoFormatID: video.id,
             audioFormatID: selectedAudio?.id,
             selector: selectedAudio.map { "\(video.id)+\($0.id)" } ?? video.id,
-            estimatedBytes: estimatedBytes
+            estimatedBytes: estimatedBytes,
+            processingPlan: processingPlan
         )
     }
 
@@ -1042,6 +1068,70 @@ struct MediaFormatCatalog: Equatable, Sendable {
         case .mov:
             return codec(format.audioCodec, hasAnyPrefix: ["mp4a", "aac", "mp3"])
         }
+    }
+
+    private func processingPlan(
+        outputFormat: VideoFormat,
+        video: MediaFormat,
+        sourceAudioCodec: String?,
+        includeAudio: Bool
+    ) -> VideoProcessingPlan {
+        let videoAction: VideoProcessingPlan.VideoAction
+        switch outputFormat {
+        case .mkv:
+            videoAction = .copy
+        case .mp4, .mov:
+            if codec(video.videoCodec, hasAnyPrefix: ["avc1", "h264", "hev1", "hvc1", "hevc"]) {
+                videoAction = .copy
+            } else {
+                let height = video.height ?? 0
+                let resolutionFloor: Int
+                if height >= 2160 {
+                    resolutionFloor = 20_000
+                } else if height >= 1440 {
+                    resolutionFloor = 12_000
+                } else if height >= 1080 {
+                    resolutionFloor = 8_000
+                } else {
+                    resolutionFloor = 5_000
+                }
+                let sourceScaledBitrate = Int((video.videoBitrate * 1.5).rounded(.up))
+                videoAction = .hevc(targetBitrateKbps: max(sourceScaledBitrate, resolutionFloor))
+            }
+        }
+
+        let audioAction: VideoProcessingPlan.AudioAction
+        guard includeAudio else {
+            audioAction = .none
+            return VideoProcessingPlan(
+                container: outputFormat,
+                videoAction: videoAction,
+                audioAction: audioAction
+            )
+        }
+
+        switch outputFormat {
+        case .mkv:
+            if let sourceAudioCodec,
+               codec(sourceAudioCodec, hasAnyPrefix: ["flac"]) {
+                audioAction = .copy
+            } else {
+                audioAction = .flac
+            }
+        case .mp4, .mov:
+            if let sourceAudioCodec,
+               codec(sourceAudioCodec, hasAnyPrefix: ["mp4a", "aac"]) {
+                audioAction = .copy
+            } else {
+                audioAction = .aac(bitRateKbps: 320)
+            }
+        }
+
+        return VideoProcessingPlan(
+            container: outputFormat,
+            videoAction: videoAction,
+            audioAction: audioAction
+        )
     }
 
     private func codec(_ codec: String, hasAnyPrefix prefixes: [String]) -> Bool {
