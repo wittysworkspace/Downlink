@@ -1024,7 +1024,7 @@ struct MediaFormatCatalog: Equatable, Sendable {
             return true
         case .mp4:
             return codec(format.videoCodec, hasAnyPrefix: [
-                "avc1", "h264", "hev1", "hvc1", "hevc", "av01", "av1", "vp9", "vp09", "mpeg4"
+                "avc1", "h264", "hev1", "hvc1", "hevc", "mpeg4"
             ])
         case .mov:
             return codec(format.videoCodec, hasAnyPrefix: [
@@ -1038,7 +1038,7 @@ struct MediaFormatCatalog: Equatable, Sendable {
         case .mkv:
             return true
         case .mp4:
-            return codec(format.audioCodec, hasAnyPrefix: ["mp4a", "aac", "mp3", "opus"])
+            return codec(format.audioCodec, hasAnyPrefix: ["mp4a", "aac", "mp3"])
         case .mov:
             return codec(format.audioCodec, hasAnyPrefix: ["mp4a", "aac", "mp3"])
         }

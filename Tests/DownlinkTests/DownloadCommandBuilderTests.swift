@@ -829,6 +829,30 @@ final class DownloadCommandBuilderTests: XCTestCase {
         XCTAssertTrue(catalog.compatibleVideoQualities(outputFormat: .mov, includeAudio: true).isEmpty)
     }
 
+    func testMP4SelectionOnlyOffersQuickTimeCompatibleCodecs() throws {
+        let catalog = MediaFormatCatalog.make(metadata: [
+            "formats": [
+                ["format_id": "vp9-4k", "height": 2160, "vcodec": "vp9", "acodec": "none", "tbr": 8_000],
+                ["format_id": "av1-4k", "height": 2160, "vcodec": "av01.0.12M.08", "acodec": "none", "tbr": 4_000],
+                ["format_id": "h264-1080", "height": 1080, "vcodec": "avc1.640028", "acodec": "none", "tbr": 2_000],
+                ["format_id": "opus-high", "vcodec": "none", "acodec": "opus", "abr": 192],
+                ["format_id": "aac-compatible", "vcodec": "none", "acodec": "mp4a.40.2", "abr": 128]
+            ]
+        ])
+
+        let selection = try XCTUnwrap(catalog.videoSelection(
+            height: 1080,
+            includeAudio: true,
+            outputFormat: .mp4
+        ))
+
+        XCTAssertEqual(selection.selector, "h264-1080+aac-compatible")
+        XCTAssertEqual(
+            catalog.compatibleVideoQualities(outputFormat: .mp4, includeAudio: true).map(\.height),
+            [1080]
+        )
+    }
+
     func testMediaFormatCatalogUsesVideoOnlySelectorWhenAudioIsDisabled() throws {
         let catalog = MediaFormatCatalog.make(metadata: [
             "formats": [
