@@ -32,13 +32,18 @@ The packaged release includes standalone `yt-dlp`, `ffmpeg`, and `ffprobe`, plus
 - Paste one URL at a time, then click Check or press Return to inspect the available formats
 - See an estimated file size before downloading when the source provides one
 - Download video, extract audio, or save image posts
-- Video formats: MP4, MKV, MOV
+- Video formats: MP4, MOV, MKV
 - Audio formats: MP3, M4A, WAV, FLAC, OPUS
 - Image mode saves discovered source images in their original image format when available
-- Video qualities are discovered from each checked source; the highest compatible resolution is selected by default, then the highest bitrate available at that resolution
+- Video qualities are discovered from each checked source; the highest available resolution is selected by default, then the highest-bitrate streams available at that resolution
 - Clean output names such as `Original title [1080p].mp4`, `Original title.wav`, or `Post title [Image].jpg`
-- Metadata is always embedded in Video and Audio downloads; Video artwork and subtitles are optional
+- Metadata is always embedded in Video and Audio downloads; Video artwork and subtitles are optional where the selected container supports them
 - English, Simplified Chinese, Traditional Chinese, and Thai interface languages
+
+### Video container behavior
+
+- **MP4 and MOV** use H.264 or HEVC video with AAC audio for compatibility with QuickTime Player, Adobe Premiere Pro, and DaVinci Resolve. If the best source at the selected resolution is VP9 or AV1, Downlink converts it to HEVC without lowering the selected resolution. Genuine MOV does not reliably retain attached artwork, so its artwork option is disabled.
+- **MKV** keeps the selected source video stream without re-encoding and converts its audio to lossless FLAC when needed. This preserves the source video for DaVinci Resolve, but QuickTime Player and Adobe Premiere Pro compatibility is not guaranteed.
 
 ## Requirements
 
