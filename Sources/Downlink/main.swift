@@ -1,9 +1,54 @@
 import SwiftUI
 import AppKit
+import Darwin
 import Foundation
 
 private let appDisplayName = "Downlink"
-private let appVersion = "2.0.7"
+private let appVersion = AppMetadata.version
+
+enum AppMetadata {
+    static let version = "26.0"
+}
+
+enum AppMotionTransitionStyle: Equatable {
+    case identity
+    case fade
+    case topReveal
+    case scaleFade
+}
+
+enum AppMotion {
+    private static let fast = 0.16
+    private static let state = 0.22
+
+    static func fastDuration(reduceMotion: Bool) -> Double {
+        reduceMotion ? 0 : fast
+    }
+
+    static func stateDuration(reduceMotion: Bool) -> Double {
+        reduceMotion ? 0 : state
+    }
+
+    static func fastAnimation(reduceMotion: Bool) -> Animation? {
+        guard !reduceMotion else { return nil }
+        return .timingCurve(0.25, 1, 0.5, 1, duration: fast)
+    }
+
+    static func stateAnimation(reduceMotion: Bool) -> Animation? {
+        guard !reduceMotion else { return nil }
+        return .timingCurve(0.22, 1, 0.36, 1, duration: state)
+    }
+
+    static func activityTransitionStyle(isChecking: Bool, reduceMotion: Bool) -> AppMotionTransitionStyle {
+        guard !reduceMotion else { return .identity }
+        return isChecking ? .fade : .topReveal
+    }
+
+    static func summaryPlaceholderTransitionStyle(isChecking: Bool, reduceMotion: Bool) -> AppMotionTransitionStyle {
+        guard !reduceMotion else { return .identity }
+        return isChecking ? .fade : .topReveal
+    }
+}
 
 enum AppTypography {
     static let primaryFontFamily = "DB Helvethaica X"
@@ -44,6 +89,41 @@ enum AppTypography {
 
 enum AppControlMetrics {
     static let compactMenuWidth: CGFloat = 150
+    static let settingsFieldLabelWidth: CGFloat = 86
+    static let settingsLabelToControlSpacing: CGFloat = 16
+    static let settingsOutputGroupSpacing: CGFloat = 24
+    static let settingsInlineControlSpacing: CGFloat = 16
+    static let settingsCheckboxSpacing: CGFloat = 30
+}
+
+enum SettingsRow: Equatable {
+    case modeAndFormat
+    case outputDirectory
+    case cookies
+    case includeAudio
+    case metadata
+}
+
+enum SettingsLayout {
+    static let checkboxControlColumnX = AppControlMetrics.settingsFieldLabelWidth
+        + AppControlMetrics.settingsLabelToControlSpacing
+
+    static func rows(for kind: DownloadKind, showsCookies: Bool) -> [SettingsRow] {
+        var rows: [SettingsRow] = [.modeAndFormat, .outputDirectory]
+
+        if showsCookies {
+            rows.append(.cookies)
+        }
+
+        if kind == .video {
+            rows.append(.includeAudio)
+        }
+
+        if kind != .image {
+            rows.append(.metadata)
+        }
+        return rows
+    }
 }
 
 enum ImagePreviewLayout {
@@ -89,24 +169,18 @@ enum LinkCheckSignature {
     static func make(
         urls: [String],
         kind: DownloadKind,
-        videoFormat: VideoFormat,
-        audioFormat: AudioFormat,
-        quality: Quality,
-        includeVideoAudio: Bool,
-        includeSubtitles: Bool,
-        embedMetadata: Bool,
+        videoFormat _: VideoFormat,
+        audioFormat _: AudioFormat,
+        quality _: Quality,
+        includeVideoAudio _: Bool,
+        includeSubtitles _: Bool,
+        embedArtwork _: Bool,
         cookieSource: CookieSource,
         cookieFilePath: String
     ) -> String {
         [
             urls.joined(separator: "\n"),
             kind.rawValue,
-            videoFormat.rawValue,
-            audioFormat.rawValue,
-            quality.rawValue,
-            includeVideoAudio.description,
-            includeSubtitles.description,
-            embedMetadata.description,
             cookieSource.rawValue,
             cookieFilePath
         ].joined(separator: "\u{1F}")
@@ -276,6 +350,15 @@ enum AppLanguage: String, CaseIterable, Identifiable {
         }
     }
 
+    var downloadFailed: String {
+        switch self {
+        case .english: return "Download failed. Check the link and try again."
+        case .simplifiedChinese: return "下载失败，请检查链接后重试。"
+        case .traditionalChinese: return "下載失敗，請檢查連結後再試一次。"
+        case .thai: return "ดาวน์โหลดไม่สำเร็จ โปรดตรวจสอบลิงก์แล้วลองอีกครั้ง"
+        }
+    }
+
     var initialLog: String {
         ""
     }
@@ -363,10 +446,19 @@ enum AppLanguage: String, CaseIterable, Identifiable {
 
     var metadata: String {
         switch self {
-        case .english: return "Embed metadata and artwork"
-        case .simplifiedChinese: return "嵌入元数据和封面"
-        case .traditionalChinese: return "嵌入中繼資料和封面"
-        case .thai: return "ฝังข้อมูลเมตาและภาพปก"
+        case .english: return "Embed metadata"
+        case .simplifiedChinese: return "嵌入元数据"
+        case .traditionalChinese: return "嵌入中繼資料"
+        case .thai: return "ฝังข้อมูลเมตา"
+        }
+    }
+
+    var artwork: String {
+        switch self {
+        case .english: return "Embed artwork"
+        case .simplifiedChinese: return "嵌入封面"
+        case .traditionalChinese: return "嵌入封面"
+        case .thai: return "ฝังภาพปก"
         }
     }
 
@@ -399,19 +491,19 @@ enum AppLanguage: String, CaseIterable, Identifiable {
 
     var dependencyReady: String {
         switch self {
-        case .english: return "Downloader and FFmpeg are ready."
-        case .simplifiedChinese: return "下载器和 FFmpeg 已就绪。"
-        case .traditionalChinese: return "下載器和 FFmpeg 已就緒。"
-        case .thai: return "ตัวดาวน์โหลดและ FFmpeg พร้อมใช้งาน"
+        case .english: return "Downloader, FFmpeg, and FFprobe are ready."
+        case .simplifiedChinese: return "下载器、FFmpeg 和 FFprobe 已就绪。"
+        case .traditionalChinese: return "下載器、FFmpeg 和 FFprobe 已就緒。"
+        case .thai: return "ตัวดาวน์โหลด, FFmpeg และ FFprobe พร้อมใช้งาน"
         }
     }
 
     var dependencyMissing: String {
         switch self {
-        case .english: return "Install yt-dlp and ffmpeg, or bundle them inside the app."
-        case .simplifiedChinese: return "请安装 yt-dlp 和 ffmpeg，或把它们内置到应用包中。"
-        case .traditionalChinese: return "請安裝 yt-dlp 和 ffmpeg，或把它們內建到應用程式中。"
-        case .thai: return "ติดตั้ง yt-dlp และ ffmpeg หรือรวมไว้ในแอป"
+        case .english: return "Install yt-dlp, ffmpeg, and ffprobe, or bundle them inside the app."
+        case .simplifiedChinese: return "请安装 yt-dlp、ffmpeg 和 ffprobe，或把它们内置到应用包中。"
+        case .traditionalChinese: return "請安裝 yt-dlp、ffmpeg 和 ffprobe，或把它們內建到應用程式中。"
+        case .thai: return "ติดตั้ง yt-dlp, ffmpeg และ ffprobe หรือรวมไว้ในแอป"
         }
     }
 
@@ -545,7 +637,6 @@ enum AppLanguage: String, CaseIterable, Identifiable {
         switch format {
         case .mp4: return "MP4"
         case .mkv: return "MKV"
-        case .webm: return "WEBM"
         case .mov: return "MOV"
         }
     }
@@ -560,16 +651,16 @@ enum AppLanguage: String, CaseIterable, Identifiable {
         }
     }
 
-    func missingToolLog(ytDlpFound: Bool, ffmpegFound: Bool) -> String {
+    func missingToolLog(ytDlpFound: Bool, ffmpegFound: Bool, ffprobeFound: Bool) -> String {
         switch self {
         case .english:
-            return "Missing dependency: yt-dlp \(ytDlpFound ? "found" : "missing"), ffmpeg \(ffmpegFound ? "found" : "missing"). Install with: brew install yt-dlp ffmpeg\n"
+            return "Missing dependency: yt-dlp \(ytDlpFound ? "found" : "missing"), ffmpeg \(ffmpegFound ? "found" : "missing"), ffprobe \(ffprobeFound ? "found" : "missing"). Install with: brew install yt-dlp ffmpeg\n"
         case .simplifiedChinese:
-            return "缺少依赖：yt-dlp \(ytDlpFound ? "已找到" : "未找到")，ffmpeg \(ffmpegFound ? "已找到" : "未找到")。安装命令：brew install yt-dlp ffmpeg\n"
+            return "缺少依赖：yt-dlp \(ytDlpFound ? "已找到" : "未找到")，ffmpeg \(ffmpegFound ? "已找到" : "未找到")，ffprobe \(ffprobeFound ? "已找到" : "未找到")。安装命令：brew install yt-dlp ffmpeg\n"
         case .traditionalChinese:
-            return "缺少依賴：yt-dlp \(ytDlpFound ? "已找到" : "未找到")，ffmpeg \(ffmpegFound ? "已找到" : "未找到")。安裝命令：brew install yt-dlp ffmpeg\n"
+            return "缺少依賴：yt-dlp \(ytDlpFound ? "已找到" : "未找到")，ffmpeg \(ffmpegFound ? "已找到" : "未找到")，ffprobe \(ffprobeFound ? "已找到" : "未找到")。安裝命令：brew install yt-dlp ffmpeg\n"
         case .thai:
-            return "ขาดเครื่องมือ: yt-dlp \(ytDlpFound ? "พบแล้ว" : "ไม่พบ"), ffmpeg \(ffmpegFound ? "พบแล้ว" : "ไม่พบ") ติดตั้งด้วย: brew install yt-dlp ffmpeg\n"
+            return "ขาดเครื่องมือ: yt-dlp \(ytDlpFound ? "พบแล้ว" : "ไม่พบ"), ffmpeg \(ffmpegFound ? "พบแล้ว" : "ไม่พบ"), ffprobe \(ffprobeFound ? "พบแล้ว" : "ไม่พบ") ติดตั้งด้วย: brew install yt-dlp ffmpeg\n"
         }
     }
 }
@@ -621,6 +712,33 @@ enum CookiePickerVisibility {
     }
 }
 
+enum SingleURLInput {
+    static func parse(_ text: String) -> String? {
+        let tokens = text
+            .split(whereSeparator: \.isWhitespace)
+            .map(String.init)
+        guard tokens.count == 1,
+              let components = URLComponents(string: tokens[0]),
+              let scheme = components.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              components.host != nil else {
+            return nil
+        }
+        return tokens[0]
+    }
+}
+
+enum URLInputCommand {
+    private static let submitCommandNames = [
+        "insertNewline:",
+        "insertNewlineIgnoringFieldEditor:"
+    ]
+
+    static func isSubmit(_ commandSelector: Selector) -> Bool {
+        submitCommandNames.contains(NSStringFromSelector(commandSelector))
+    }
+}
+
 enum DownloadKind: String, CaseIterable, Identifiable {
     case video
     case audio
@@ -633,10 +751,22 @@ enum DownloadKind: String, CaseIterable, Identifiable {
     }
 }
 
+enum OutputNaming {
+    static func template(kind: DownloadKind, videoQualityLabel: String?) -> String {
+        switch kind {
+        case .video:
+            return "%(title)s [\(videoQualityLabel ?? "Best")].%(ext)s"
+        case .audio:
+            return "%(title)s.%(ext)s"
+        case .image:
+            return "%(title)s [Image].%(ext)s"
+        }
+    }
+}
+
 enum VideoFormat: String, CaseIterable, Identifiable {
     case mp4
     case mkv
-    case webm
     case mov
 
     var id: String { rawValue }
@@ -651,7 +781,6 @@ enum AudioFormat: String, CaseIterable, Identifiable {
     case wav
     case flac
     case opus
-    case aac
 
     var id: String { rawValue }
 }
@@ -694,13 +823,338 @@ enum Quality: String, CaseIterable, Identifiable {
     }
 }
 
+struct VideoQualityOption: Equatable, Identifiable, Sendable {
+    let height: Int?
+
+    static let best = VideoQualityOption(height: nil)
+
+    var id: String {
+        height.map(String.init) ?? "best"
+    }
+
+    var label: String {
+        height.map { "\($0)p" } ?? "Best"
+    }
+}
+
+struct VideoStreamSelection: Equatable, Sendable {
+    let height: Int?
+    let videoFormatID: String
+    let audioFormatID: String?
+    let selector: String
+    let estimatedBytes: Int64?
+}
+
+struct AudioStreamSelection: Equatable, Sendable {
+    let formatID: String
+    let estimatedBytes: Int64?
+}
+
+struct MediaFormatCatalog: Equatable, Sendable {
+    private struct MediaFormat: Equatable, Sendable {
+        let id: String
+        let height: Int?
+        let hasVideo: Bool
+        let hasAudio: Bool
+        let videoCodec: String
+        let audioCodec: String
+        let videoBitrate: Double
+        let audioBitrate: Double
+        let bytes: Int64?
+        let preference: Double
+    }
+
+    private let formats: [MediaFormat]
+    let videoQualities: [VideoQualityOption]
+    let checkedAudioSelection: AudioStreamSelection?
+
+    static func make(metadata: [String: Any]) -> MediaFormatCatalog {
+        let sourceFormats: [[String: Any]] = {
+            if let formats = metadata["formats"] as? [[String: Any]], !formats.isEmpty {
+                return formats
+            }
+            if let formats = metadata["requested_formats"] as? [[String: Any]], !formats.isEmpty {
+                return formats
+            }
+            return [metadata]
+        }()
+        let formats = sourceFormats.compactMap { format -> MediaFormat? in
+            guard let id = stringValue(format["format_id"]), !id.isEmpty else { return nil }
+
+            let videoCodec = stringValue(format["vcodec"])
+            let audioCodec = stringValue(format["acodec"])
+            let hasVideo = videoCodec.map { $0 != "none" } ?? false
+            let hasAudio = audioCodec.map { $0 != "none" } ?? false
+            guard hasVideo || hasAudio else { return nil }
+
+            return MediaFormat(
+                id: id,
+                height: intValue(format["height"]),
+                hasVideo: hasVideo,
+                hasAudio: hasAudio,
+                videoCodec: videoCodec?.lowercased() ?? "none",
+                audioCodec: audioCodec?.lowercased() ?? "none",
+                videoBitrate: doubleValue(format["tbr"]) ?? doubleValue(format["vbr"]) ?? 0,
+                audioBitrate: doubleValue(format["abr"]) ?? (hasAudio && !hasVideo ? doubleValue(format["tbr"]) : nil) ?? 0,
+                bytes: int64Value(format["filesize"]) ?? int64Value(format["filesize_approx"]),
+                preference: doubleValue(format["preference"]) ?? 0
+            )
+        }
+
+        let heights = Set(formats.filter(\.hasVideo).compactMap(\.height)).sorted(by: >)
+        let qualities = heights.isEmpty ? [.best] : heights.map { VideoQualityOption(height: $0) }
+        return MediaFormatCatalog(
+            formats: formats,
+            videoQualities: qualities,
+            checkedAudioSelection: checkedAudioSelection(from: metadata)
+        )
+    }
+
+    func compatibleVideoQualities(
+        outputFormat: VideoFormat,
+        includeAudio: Bool
+    ) -> [VideoQualityOption] {
+        videoQualities.filter {
+            videoSelection(
+                height: $0.height,
+                includeAudio: includeAudio,
+                outputFormat: outputFormat
+            ) != nil
+        }
+    }
+
+    func videoSelection(
+        height: Int?,
+        includeAudio: Bool,
+        outputFormat: VideoFormat = .mkv
+    ) -> VideoStreamSelection? {
+        let allVideoCandidates = formats.filter { format in
+            format.hasVideo
+                && (height == nil || format.height == height)
+                && supportsVideo(format, in: outputFormat)
+        }
+        let videoOnlyCandidates = allVideoCandidates.filter { !$0.hasAudio }
+        let combinedCandidates = allVideoCandidates.filter {
+            $0.hasAudio && supportsAudio($0, in: outputFormat)
+        }
+        let audio = bestAudioOnlyFormat(in: outputFormat)
+        let videoCandidates: [MediaFormat]
+        if includeAudio {
+            if audio != nil, !videoOnlyCandidates.isEmpty {
+                videoCandidates = videoOnlyCandidates
+            } else if !combinedCandidates.isEmpty {
+                videoCandidates = combinedCandidates
+            } else {
+                return nil
+            }
+        } else {
+            guard !videoOnlyCandidates.isEmpty else { return nil }
+            videoCandidates = videoOnlyCandidates
+        }
+        guard let video = videoCandidates.max(by: { left, right in
+            if left.videoBitrate == right.videoBitrate {
+                if (left.bytes ?? 0) == (right.bytes ?? 0) {
+                    if left.preference == right.preference {
+                        return left.id > right.id
+                    }
+                    return left.preference < right.preference
+                }
+                return (left.bytes ?? 0) < (right.bytes ?? 0)
+            }
+            return left.videoBitrate < right.videoBitrate
+        }) else {
+            return nil
+        }
+
+        guard includeAudio, !video.hasAudio else {
+            return VideoStreamSelection(
+                height: video.height ?? height,
+                videoFormatID: video.id,
+                audioFormatID: nil,
+                selector: video.id,
+                estimatedBytes: video.bytes
+            )
+        }
+
+        let selectedAudio = includeAudio && !video.hasAudio ? audio : nil
+        let estimatedBytes: Int64?
+        if let videoBytes = video.bytes, let audioBytes = selectedAudio?.bytes {
+            estimatedBytes = videoBytes + audioBytes
+        } else if selectedAudio == nil {
+            estimatedBytes = video.bytes
+        } else {
+            estimatedBytes = nil
+        }
+
+        return VideoStreamSelection(
+            height: video.height ?? height,
+            videoFormatID: video.id,
+            audioFormatID: selectedAudio?.id,
+            selector: selectedAudio.map { "\(video.id)+\($0.id)" } ?? video.id,
+            estimatedBytes: estimatedBytes
+        )
+    }
+
+    var bestAudioSelection: AudioStreamSelection? {
+        bestAudioFormat.map {
+            AudioStreamSelection(formatID: $0.id, estimatedBytes: $0.bytes)
+        }
+    }
+
+    private var bestAudioFormat: MediaFormat? {
+        bestAudioOnlyFormat ?? bestFormat(in: formats.filter(\.hasAudio), bitrate: \.audioBitrate)
+    }
+
+    private var bestAudioOnlyFormat: MediaFormat? {
+        bestFormat(in: formats.filter { $0.hasAudio && !$0.hasVideo }, bitrate: \.audioBitrate)
+    }
+
+    private func bestAudioOnlyFormat(in outputFormat: VideoFormat) -> MediaFormat? {
+        bestFormat(
+            in: formats.filter {
+                $0.hasAudio && !$0.hasVideo && supportsAudio($0, in: outputFormat)
+            },
+            bitrate: \.audioBitrate
+        )
+    }
+
+    private func supportsVideo(_ format: MediaFormat, in outputFormat: VideoFormat) -> Bool {
+        switch outputFormat {
+        case .mkv:
+            return true
+        case .mp4:
+            return codec(format.videoCodec, hasAnyPrefix: [
+                "avc1", "h264", "hev1", "hvc1", "hevc", "av01", "av1", "vp9", "vp09", "mpeg4"
+            ])
+        case .mov:
+            return codec(format.videoCodec, hasAnyPrefix: [
+                "avc1", "h264", "hev1", "hvc1", "hevc", "mpeg4"
+            ])
+        }
+    }
+
+    private func supportsAudio(_ format: MediaFormat, in outputFormat: VideoFormat) -> Bool {
+        switch outputFormat {
+        case .mkv:
+            return true
+        case .mp4:
+            return codec(format.audioCodec, hasAnyPrefix: ["mp4a", "aac", "mp3", "opus"])
+        case .mov:
+            return codec(format.audioCodec, hasAnyPrefix: ["mp4a", "aac", "mp3"])
+        }
+    }
+
+    private func codec(_ codec: String, hasAnyPrefix prefixes: [String]) -> Bool {
+        prefixes.contains { codec.hasPrefix($0) }
+    }
+
+    private func bestFormat(
+        in candidates: [MediaFormat],
+        bitrate: KeyPath<MediaFormat, Double>
+    ) -> MediaFormat? {
+        return candidates.max(by: { left, right in
+                if left[keyPath: bitrate] == right[keyPath: bitrate] {
+                    if (left.bytes ?? 0) == (right.bytes ?? 0) {
+                        if left.preference == right.preference {
+                            return left.id > right.id
+                        }
+                        return left.preference < right.preference
+                    }
+                    return (left.bytes ?? 0) < (right.bytes ?? 0)
+                }
+                return left[keyPath: bitrate] < right[keyPath: bitrate]
+            })
+    }
+
+    private static func stringValue(_ value: Any?) -> String? {
+        value as? String
+    }
+
+    private static func doubleValue(_ value: Any?) -> Double? {
+        if let value = value as? Double { return value }
+        if let value = value as? Int { return Double(value) }
+        if let value = value as? NSNumber { return value.doubleValue }
+        if let value = value as? String { return Double(value) }
+        return nil
+    }
+
+    private static func intValue(_ value: Any?) -> Int? {
+        doubleValue(value).map { Int($0.rounded()) }
+    }
+
+    private static func int64Value(_ value: Any?) -> Int64? {
+        doubleValue(value).map { Int64($0.rounded()) }
+    }
+
+    private static func checkedAudioSelection(from metadata: [String: Any]) -> AudioStreamSelection? {
+        let requestedFormats = metadata["requested_formats"] as? [[String: Any]] ?? []
+        let candidates = requestedFormats + [metadata]
+        let audioOnly = candidates.first { format in
+            let hasAudio = stringValue(format["acodec"]).map { $0 != "none" } ?? false
+            let hasVideo = stringValue(format["vcodec"]).map { $0 != "none" } ?? false
+            return hasAudio && !hasVideo && stringValue(format["format_id"]) != nil
+        }
+        let selected = audioOnly ?? candidates.first { format in
+            (stringValue(format["acodec"]).map { $0 != "none" } ?? false)
+                && stringValue(format["format_id"]) != nil
+        }
+        guard let selected, let id = stringValue(selected["format_id"]) else { return nil }
+        return AudioStreamSelection(
+            formatID: id,
+            estimatedBytes: int64Value(selected["filesize"]) ?? int64Value(selected["filesize_approx"])
+        )
+    }
+}
+
+enum CheckedSelectionReadiness {
+    static func hasVideoOptions(
+        _ catalog: MediaFormatCatalog,
+        outputFormat: VideoFormat = .mkv
+    ) -> Bool {
+        catalog.videoQualities.contains { quality in
+            catalog.videoSelection(
+                height: quality.height,
+                includeAudio: true,
+                outputFormat: outputFormat
+            ) != nil
+                || catalog.videoSelection(
+                    height: quality.height,
+                    includeAudio: false,
+                    outputFormat: outputFormat
+                ) != nil
+        }
+    }
+
+    static func isFulfillable(
+        kind: DownloadKind,
+        catalog: MediaFormatCatalog?,
+        selectedVideoHeight: Int?,
+        includeVideoAudio: Bool,
+        videoFormat: VideoFormat = .mkv
+    ) -> Bool {
+        switch kind {
+        case .video:
+            return catalog?.videoSelection(
+                height: selectedVideoHeight,
+                includeAudio: includeVideoAudio,
+                outputFormat: videoFormat
+            ) != nil
+        case .audio:
+            return catalog?.checkedAudioSelection != nil
+        case .image:
+            return true
+        }
+    }
+}
+
 struct DependencyStatus: Sendable {
     let ytDlpPath: String?
     let ffmpegPath: String?
+    let ffprobePath: String?
     let galleryDLPath: String?
 
     var isReady: Bool {
-        ytDlpPath != nil && ffmpegPath != nil
+        ytDlpPath != nil && ffmpegPath != nil && ffprobePath != nil
     }
 }
 
@@ -711,6 +1165,93 @@ enum LinkScanState: Equatable, Sendable {
     case ready(totalBytes: Int64?, count: Int, previewImageURL: URL?)
     case unavailable
     case missingTools
+}
+
+enum URLSubmitAction: Equatable {
+    case check
+    case none
+}
+
+enum URLSubmitPolicy {
+    static func action(
+        hasValidURL: Bool,
+        isRunning: Bool,
+        scanState: LinkScanState,
+        hasCheckedOptions: Bool
+    ) -> URLSubmitAction {
+        guard hasValidURL,
+              !isRunning,
+              scanState != .checking,
+              !hasCheckedOptions else {
+            return .none
+        }
+
+        return .check
+    }
+}
+
+enum LinkCheckCachePolicy {
+    static func shouldReuse(hasValidCheck: Bool, forceRefresh: Bool) -> Bool {
+        hasValidCheck && !forceRefresh
+    }
+}
+
+enum LinkCheckFailure: Equatable, Sendable {
+    case videoUnavailable
+    case galleryRuntimeUnavailable
+    case timedOut
+
+    static func detect(in diagnosticLog: String) -> LinkCheckFailure? {
+        if diagnosticLog.localizedCaseInsensitiveContains("video unavailable") {
+            return .videoUnavailable
+        }
+        if diagnosticLog.localizedCaseInsensitiveContains("python3 not found")
+            || diagnosticLog.localizedCaseInsensitiveContains("no module named gallery_dl") {
+            return .galleryRuntimeUnavailable
+        }
+        if diagnosticLog.localizedCaseInsensitiveContains("link check timed out") {
+            return .timedOut
+        }
+        return nil
+    }
+
+    func message(for language: AppLanguage) -> String {
+        switch self {
+        case .videoUnavailable:
+            switch language {
+            case .english:
+                return "This video is unavailable. It may have been removed, made private, or restricted."
+            case .simplifiedChinese:
+                return "此视频不可用，可能已被删除、设为私密或受到访问限制。"
+            case .traditionalChinese:
+                return "此影片無法使用，可能已被刪除、設為私人或受到存取限制。"
+            case .thai:
+                return "วิดีโอนี้ไม่พร้อมใช้งาน อาจถูกลบ ตั้งเป็นส่วนตัว หรือจำกัดการเข้าถึง"
+            }
+        case .galleryRuntimeUnavailable:
+            switch language {
+            case .english:
+                return "Instagram Image mode requires a working Python 3 runtime for gallery-dl."
+            case .simplifiedChinese:
+                return "Instagram 图片模式需要可供 gallery-dl 使用的 Python 3 运行环境。"
+            case .traditionalChinese:
+                return "Instagram 圖片模式需要可供 gallery-dl 使用的 Python 3 執行環境。"
+            case .thai:
+                return "โหมดรูปภาพ Instagram ต้องใช้ Python 3 ที่พร้อมทำงานสำหรับ gallery-dl"
+            }
+        case .timedOut:
+            switch language {
+            case .english:
+                return "The link check took too long. Please try again."
+            case .simplifiedChinese:
+                return "链接检查耗时过长，请重试。"
+            case .traditionalChinese:
+                return "連結檢查耗時過長，請再試一次。"
+            case .thai:
+                return "การตรวจสอบลิงก์ใช้เวลานานเกินไป โปรดลองอีกครั้ง"
+            }
+        }
+    }
 }
 
 struct LinkScanResult: @unchecked Sendable {
@@ -735,7 +1276,9 @@ struct MediaSummary {
         videoFormat: VideoFormat,
         audioFormat: AudioFormat,
         quality: Quality,
+        videoQualityLabel: String? = nil,
         totalBytes: Int64?,
+        imageTotalBytes: Int64? = nil,
         previewImageURL: URL?
     ) -> MediaSummary? {
         let metadata = metadataGroups.first?.first
@@ -754,8 +1297,18 @@ struct MediaSummary {
             ?? stringValue(metadata?["creator"])
             ?? ""
         let duration = durationLabel(from: metadata?["duration"]) ?? "--"
-        let estimatedSize = totalBytes.map(byteLabelForUI) ?? "--"
-        let outputFilename = "\(title) [\(outputDescriptor(kind: kind, videoFormat: videoFormat, audioFormat: audioFormat, quality: quality))].\(fileExtension(kind: kind, videoFormat: videoFormat, audioFormat: audioFormat))"
+        let estimatedSize = (kind == .image ? imageTotalBytes : totalBytes).map(byteLabelForUI) ?? "--"
+        let fileExtension = fileExtension(kind: kind, videoFormat: videoFormat, audioFormat: audioFormat)
+        let outputFilename: String
+
+        if kind == .audio {
+            outputFilename = "\(title).\(fileExtension)"
+        } else {
+            let descriptor = kind == .video
+                ? (videoQualityLabel ?? quality.filenameLabel)
+                : outputDescriptor(kind: kind, videoFormat: videoFormat, audioFormat: audioFormat, quality: quality)
+            outputFilename = "\(title) [\(descriptor)].\(fileExtension)"
+        }
 
         return MediaSummary(
             title: title,
@@ -829,6 +1382,18 @@ struct MediaSummary {
         formatter.isAdaptive = true
         return formatter.string(fromByteCount: bytes)
     }
+
+    func replacingOutputFilename(_ outputFilename: String) -> MediaSummary {
+        MediaSummary(
+            title: title,
+            source: source,
+            creator: creator,
+            duration: duration,
+            estimatedSize: estimatedSize,
+            outputFilename: outputFilename,
+            previewImageURL: previewImageURL
+        )
+    }
 }
 
 struct DownloadHistoryItem: Identifiable, Equatable, Sendable {
@@ -845,9 +1410,12 @@ struct DownloadHistoryItem: Identifiable, Equatable, Sendable {
     let quality: Quality
     let includeVideoAudio: Bool
     let includeSubtitles: Bool
-    let embedMetadata: Bool
+    let embedArtwork: Bool
     let outputDirectory: String
     let imageItemsByURL: [String: [ImageDownloadItem]]
+    let checkedMediaFormatCatalog: MediaFormatCatalog?
+    let selectedVideoQuality: VideoQualityOption
+    let checkedSignature: String?
     let completedAt: Date
 
     init(
@@ -864,9 +1432,12 @@ struct DownloadHistoryItem: Identifiable, Equatable, Sendable {
         quality: Quality,
         includeVideoAudio: Bool,
         includeSubtitles: Bool,
-        embedMetadata: Bool,
+        embedArtwork: Bool,
         outputDirectory: String,
         imageItemsByURL: [String: [ImageDownloadItem]] = [:],
+        checkedMediaFormatCatalog: MediaFormatCatalog? = nil,
+        selectedVideoQuality: VideoQualityOption = .best,
+        checkedSignature: String? = nil,
         completedAt: Date = Date()
     ) {
         self.id = id
@@ -882,9 +1453,12 @@ struct DownloadHistoryItem: Identifiable, Equatable, Sendable {
         self.quality = quality
         self.includeVideoAudio = includeVideoAudio
         self.includeSubtitles = includeSubtitles
-        self.embedMetadata = embedMetadata
+        self.embedArtwork = embedArtwork
         self.outputDirectory = outputDirectory
         self.imageItemsByURL = imageItemsByURL
+        self.checkedMediaFormatCatalog = checkedMediaFormatCatalog
+        self.selectedVideoQuality = selectedVideoQuality
+        self.checkedSignature = checkedSignature
         self.completedAt = completedAt
     }
 
@@ -925,11 +1499,13 @@ struct DownloadConfiguration: Sendable, Equatable {
     let quality: Quality
     let includeVideoAudio: Bool
     let includeSubtitles: Bool
-    let embedMetadata: Bool
+    let embedArtwork: Bool
     let cookieSource: CookieSource
     let cookieFilePath: String
     let outputDirectory: String
     let outputTemplate: String
+    var selectedVideoFormatSelector: String? = nil
+    var selectedAudioFormatSelector: String? = nil
 }
 
 enum DownloadCommandBuilder {
@@ -950,9 +1526,9 @@ enum DownloadCommandBuilder {
         switch configuration.kind {
         case .video:
             appendFasterSingleItemDownloadArguments(to: &args)
-
-            if configuration.embedMetadata {
-                args.append("--embed-metadata")
+            args.append("--embed-metadata")
+            if configuration.embedArtwork {
+                args.append("--embed-thumbnail")
             }
 
             if configuration.includeSubtitles {
@@ -962,7 +1538,9 @@ enum DownloadCommandBuilder {
                 args.append("all,-live_chat")
             }
 
-            args.append(contentsOf: ["--format", configuration.includeVideoAudio ? configuration.quality.formatSelector : configuration.quality.videoOnlyFormatSelector])
+            let selector = configuration.selectedVideoFormatSelector
+                ?? (configuration.includeVideoAudio ? configuration.quality.formatSelector : configuration.quality.videoOnlyFormatSelector)
+            args.append(contentsOf: ["--format", selector])
             if let outputFormat = configuration.videoFormat.argumentValue {
                 args.append("--merge-output-format")
                 args.append(outputFormat)
@@ -971,12 +1549,9 @@ enum DownloadCommandBuilder {
             }
         case .audio:
             appendFasterSingleItemDownloadArguments(to: &args)
+            args.append("--embed-metadata")
 
-            if configuration.embedMetadata {
-                args.append("--embed-metadata")
-                args.append("--embed-thumbnail")
-            }
-
+            args.append(contentsOf: ["--format", configuration.selectedAudioFormatSelector ?? "bestaudio/best"])
             args.append("--extract-audio")
             args.append("--audio-format")
             args.append(configuration.audioFormat.rawValue)
@@ -1011,7 +1586,6 @@ enum DownloadCommandBuilder {
         switch configuration.kind {
         case .video:
             args.append("--no-playlist")
-            args.append(contentsOf: ["--format", configuration.includeVideoAudio ? configuration.quality.formatSelector : configuration.quality.videoOnlyFormatSelector])
         case .audio:
             args.append("--no-playlist")
             args.append(contentsOf: ["--format", "bestaudio/best"])
@@ -1065,6 +1639,23 @@ struct ImageDownloadItem: Sendable, Equatable {
     let id: String
     let fileExtension: String
     let httpHeaders: [String: String]
+    let bytes: Int64?
+
+    init(
+        url: URL,
+        title: String,
+        id: String,
+        fileExtension: String,
+        httpHeaders: [String: String],
+        bytes: Int64? = nil
+    ) {
+        self.url = url
+        self.title = title
+        self.id = id
+        self.fileExtension = fileExtension
+        self.httpHeaders = httpHeaders
+        self.bytes = bytes
+    }
 
     func suggestedFilename(index: Int, total: Int) -> String {
         let base = sanitizeFilename(title.isEmpty ? id : title)
@@ -1079,6 +1670,85 @@ struct ImageDownloadItem: Sendable, Equatable {
             .joined(separator: "-")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return cleaned.isEmpty ? "Instagram image" : String(cleaned.prefix(160))
+    }
+}
+
+enum ImagePreviewSummary {
+    static func outputFilename(items: [ImageDownloadItem]) -> String? {
+        items.first?.suggestedFilename(index: 1, total: items.count)
+    }
+}
+
+enum ImageDestinationResolver {
+    static func availableURL(directory: URL, filename: String) -> URL {
+        let original = directory.appendingPathComponent(filename)
+        guard FileManager.default.fileExists(atPath: original.path) else {
+            return original
+        }
+
+        let filenameValue = filename as NSString
+        let pathExtension = filenameValue.pathExtension
+        let stem = filenameValue.deletingPathExtension
+        var copyNumber = 2
+        while true {
+            let candidateName = pathExtension.isEmpty
+                ? "\(stem) (\(copyNumber))"
+                : "\(stem) (\(copyNumber)).\(pathExtension)"
+            let candidate = directory.appendingPathComponent(candidateName)
+            if !FileManager.default.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+            copyNumber += 1
+        }
+    }
+}
+
+enum ImageFileWriter {
+    static func write(
+        _ data: Data,
+        directory: URL,
+        filename: String,
+        cancellationCheck: () throws -> Void = { try Task.checkCancellation() }
+    ) throws -> URL {
+        while true {
+            try cancellationCheck()
+            let destination = ImageDestinationResolver.availableURL(
+                directory: directory,
+                filename: filename
+            )
+            let descriptor = open(
+                destination.path,
+                O_WRONLY | O_CREAT | O_EXCL,
+                S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH
+            )
+            if descriptor == -1 {
+                if errno == EEXIST { continue }
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+
+            let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+            do {
+                try cancellationCheck()
+                try handle.write(contentsOf: data)
+                try handle.synchronize()
+                try handle.close()
+                return destination
+            } catch {
+                try? handle.close()
+                try? FileManager.default.removeItem(at: destination)
+                throw error
+            }
+        }
+    }
+}
+
+enum ImageItemSize {
+    static func totalBytes(itemsByURL: [String: [ImageDownloadItem]]) -> Int64? {
+        let items = itemsByURL.values.flatMap { $0 }
+        guard !items.isEmpty else { return nil }
+        let sizes = items.compactMap(\.bytes)
+        guard sizes.count == items.count else { return nil }
+        return sizes.reduce(0, +)
     }
 }
 
@@ -1098,47 +1768,58 @@ enum ImageMetadataExtractor {
             }
         }
 
-        guard let url = bestImageURL(from: metadata) else { return [] }
+        guard let image = bestImage(from: metadata) else { return [] }
         let title = (metadata["title"] as? String) ?? (metadata["fulltitle"] as? String) ?? ""
         let id = (metadata["id"] as? String) ?? "instagram-image"
         return [
             ImageDownloadItem(
-                url: url,
+                url: image.url,
                 title: title,
                 id: id,
-                fileExtension: imageExtension(for: url, metadata: metadata),
-                httpHeaders: httpHeaders(from: metadata)
+                fileExtension: imageExtension(for: image.url, metadata: metadata),
+                httpHeaders: httpHeaders(from: metadata),
+                bytes: image.bytes
             )
         ]
     }
 
-    private static func bestImageURL(from metadata: [String: Any]) -> URL? {
+    private static func bestImage(from metadata: [String: Any]) -> (url: URL, bytes: Int64?)? {
+        if let value = metadata["url"] as? String,
+           let url = URL(string: value) {
+            let ext = (metadata["ext"] as? String)?.lowercased() ?? url.pathExtension.lowercased()
+            guard ["jpg", "jpeg", "png", "webp"].contains(ext) else {
+                return bestThumbnail(from: metadata)
+            }
+            return (url, numericInt64(metadata["filesize"]) ?? numericInt64(metadata["filesize_approx"]))
+        }
+
+        return bestThumbnail(from: metadata)
+    }
+
+    private static func bestThumbnail(from metadata: [String: Any]) -> (url: URL, bytes: Int64?)? {
         if let thumbnails = metadata["thumbnails"] as? [[String: Any]] {
-            let candidates = thumbnails.compactMap { thumbnail -> (url: URL, area: Int)? in
+            let candidates = thumbnails.compactMap { thumbnail -> (url: URL, area: Int, bytes: Int64?)? in
                 guard let value = thumbnail["url"] as? String,
                       let url = URL(string: value) else {
                     return nil
                 }
                 let width = numericInt(thumbnail["width"]) ?? 0
                 let height = numericInt(thumbnail["height"]) ?? 0
-                return (url, width * height)
+                return (
+                    url,
+                    width * height,
+                    numericInt64(thumbnail["filesize"]) ?? numericInt64(thumbnail["filesize_approx"])
+                )
             }
 
             if let best = candidates.max(by: { $0.area < $1.area }) {
-                return best.url
+                return (best.url, best.bytes)
             }
         }
 
         if let thumbnail = metadata["thumbnail"] as? String,
            let url = URL(string: thumbnail) {
-            return url
-        }
-
-        if let value = metadata["url"] as? String,
-           let url = URL(string: value),
-           let ext = (metadata["ext"] as? String)?.lowercased(),
-           ["jpg", "jpeg", "png", "webp"].contains(ext) {
-            return url
+            return (url, nil)
         }
 
         return nil
@@ -1168,6 +1849,23 @@ enum ImageMetadataExtractor {
             return Int(double)
         case let string as String:
             return Int(string)
+        default:
+            return nil
+        }
+    }
+
+    private static func numericInt64(_ value: Any?) -> Int64? {
+        switch value {
+        case let value as Int64:
+            return value
+        case let value as Int:
+            return Int64(value)
+        case let value as Double:
+            return Int64(value.rounded())
+        case let value as NSNumber:
+            return value.int64Value
+        case let value as String:
+            return Double(value).map { Int64($0.rounded()) }
         default:
             return nil
         }
@@ -1206,6 +1904,50 @@ enum ImagePreviewList {
     }
 }
 
+final class CheckProcessController: @unchecked Sendable {
+    enum StopReason {
+        case cancelled
+        case timedOut
+    }
+
+    private let lock = NSLock()
+    private var process: Process?
+    private var stopReason: StopReason?
+    private var isComplete = false
+
+    func start(_ process: Process) throws -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard stopReason == nil, !isComplete else { return false }
+        self.process = process
+        try process.run()
+        return true
+    }
+
+    func stop(_ reason: StopReason) {
+        lock.lock()
+        guard stopReason == nil, !isComplete else {
+            lock.unlock()
+            return
+        }
+        stopReason = reason
+        let activeProcess = process
+        lock.unlock()
+
+        if activeProcess?.isRunning == true {
+            activeProcess?.terminate()
+        }
+    }
+
+    func complete() -> StopReason? {
+        lock.lock()
+        defer { lock.unlock() }
+        isComplete = true
+        process = nil
+        return stopReason
+    }
+}
+
 enum GalleryDLImageScanner {
     private struct OrderedImageScanOutput: Sendable {
         let index: Int
@@ -1213,14 +1955,20 @@ enum GalleryDLImageScanner {
         let result: ImageURLScanResult
     }
 
-    static func scan(galleryDLPath: String, urls: [String], cookieFilePath: String) async -> (itemsByURL: [String: [ImageDownloadItem]], diagnosticLog: String) {
+    static func scan(
+        galleryDLPath: String,
+        urls: [String],
+        cookieFilePath: String,
+        timeout: Duration = .seconds(90)
+    ) async -> (itemsByURL: [String: [ImageDownloadItem]], diagnosticLog: String) {
         var itemsByURL: [String: [ImageDownloadItem]] = [:]
         var diagnosticLog = ""
 
         let scanOutputs = await imageScanOutputs(
             galleryDLPath: galleryDLPath,
             urls: urls,
-            cookieFilePath: cookieFilePath
+            cookieFilePath: cookieFilePath,
+            timeout: timeout
         )
 
         for scanOutput in scanOutputs {
@@ -1234,18 +1982,31 @@ enum GalleryDLImageScanner {
         return (itemsByURL, diagnosticLog)
     }
 
-    private static func imageScanOutputs(galleryDLPath: String, urls: [String], cookieFilePath: String) async -> [OrderedImageScanOutput] {
+    private static func imageScanOutputs(
+        galleryDLPath: String,
+        urls: [String],
+        cookieFilePath: String,
+        timeout: Duration
+    ) async -> [OrderedImageScanOutput] {
         guard urls.count > 1 else {
-            return urls.enumerated().map { index, url in
-                OrderedImageScanOutput(
+            var outputs: [OrderedImageScanOutput] = []
+            for (index, url) in urls.enumerated() {
+                let output = await metadataScan(
+                    galleryDLPath: galleryDLPath,
+                    url: url,
+                    cookieFilePath: cookieFilePath,
+                    timeout: timeout
+                )
+                outputs.append(OrderedImageScanOutput(
                     index: index,
                     url: url,
                     result: parseOutput(
-                        metadataScan(galleryDLPath: galleryDLPath, url: url, cookieFilePath: cookieFilePath),
+                        output,
                         sourceURL: url
                     )
-                )
+                ))
             }
+            return outputs
         }
 
         return await withTaskGroup(of: OrderedImageScanOutput.self) { group in
@@ -1255,7 +2016,12 @@ enum GalleryDLImageScanner {
                         index: index,
                         url: url,
                         result: parseOutput(
-                            metadataScan(galleryDLPath: galleryDLPath, url: url, cookieFilePath: cookieFilePath),
+                            await metadataScan(
+                                galleryDLPath: galleryDLPath,
+                                url: url,
+                                cookieFilePath: cookieFilePath,
+                                timeout: timeout
+                            ),
                             sourceURL: url
                         )
                     )
@@ -1303,7 +2069,12 @@ enum GalleryDLImageScanner {
         return ImageURLScanResult(items: items, diagnosticLog: diagnosticLog)
     }
 
-    private static func metadataScan(galleryDLPath: String, url: String, cookieFilePath: String) -> String {
+    private static func metadataScan(
+        galleryDLPath: String,
+        url: String,
+        cookieFilePath: String,
+        timeout: Duration
+    ) async -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: galleryDLPath)
         process.arguments = [
@@ -1317,20 +2088,47 @@ enum GalleryDLImageScanner {
         process.standardOutput = pipe
         process.standardError = pipe
 
-        do {
-            try process.run()
-        } catch {
-            return "Failed to start gallery-dl: \(error.localizedDescription)\n"
-        }
+        let controller = CheckProcessController()
 
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        let output = String(data: data, encoding: .utf8) ?? ""
-        if process.terminationStatus != 0, output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "gallery-dl exited with code \(process.terminationStatus).\n"
-        }
+        return await withTaskCancellationHandler {
+            await Task.detached(priority: .userInitiated) {
+                let timeoutTask = Task.detached {
+                    do {
+                        try await Task.sleep(for: timeout)
+                    } catch {
+                        return
+                    }
+                    controller.stop(.timedOut)
+                }
+                defer { timeoutTask.cancel() }
 
-        return output
+                do {
+                    guard try controller.start(process) else { return "" }
+                } catch {
+                    _ = controller.complete()
+                    return "Failed to start gallery-dl: \(error.localizedDescription)\n"
+                }
+
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                let stopReason = controller.complete()
+                if stopReason == .timedOut {
+                    return "Link check timed out after 90 seconds.\n"
+                }
+                if stopReason == .cancelled {
+                    return ""
+                }
+
+                let output = String(data: data, encoding: .utf8) ?? ""
+                if process.terminationStatus != 0,
+                   output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return "gallery-dl exited with code \(process.terminationStatus).\n"
+                }
+                return output
+            }.value
+        } onCancel: {
+            controller.stop(.cancelled)
+        }
     }
 
     private static func imageExtension(for url: URL) -> String {
@@ -1423,6 +2221,7 @@ enum ImageDownloadError: LocalizedError {
 
 struct DownloadJob: Sendable {
     let url: String
+    let kind: DownloadKind
     let arguments: [String]
     let imageItems: [ImageDownloadItem]
     let index: Int
@@ -1439,7 +2238,10 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
     @Published var outputDirectory = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first?.path ?? NSHomeDirectory()
     @Published var language: AppLanguage = .english {
         didSet {
-            status = language.ready
+            status = Self.translatedStatus(status, from: oldValue, to: language)
+            if userFacingErrorMessage == oldValue.downloadFailed {
+                userFacingErrorMessage = language.downloadFailed
+            }
             if logText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || logText == oldValue.initialLog {
                 logText = language.initialLog
             }
@@ -1451,7 +2253,7 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
     @Published var quality: Quality = .p1080
     @Published var includeVideoAudio = true
     @Published var includeSubtitles = false
-    @Published var embedMetadata = true
+    @Published var embedArtwork = true
     @Published var cookieSource: CookieSource = .file
     @Published var cookieFilePath: String = UserDefaults.standard.string(forKey: DefaultsKey.cookieFilePath) ?? "" {
         didSet {
@@ -1461,6 +2263,7 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
     @Published var isRunning = false
     @Published var status = AppLanguage.english.ready
     @Published var logText = AppLanguage.english.initialLog
+    @Published private(set) var userFacingErrorMessage: String?
     @Published var activeJobIndex: Int?
     @Published var completedJobCount = 0
     @Published var progressFraction = 0.0
@@ -1469,10 +2272,16 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
     @Published var downloadedLabel = "--"
     @Published var linkScanState: LinkScanState = .empty
     @Published var mediaSummary: MediaSummary?
+    @Published private(set) var linkCheckFailure: LinkCheckFailure?
     @Published var downloadHistory: [DownloadHistoryItem] = []
+    @Published private(set) var availableVideoQualities: [VideoQualityOption] = []
+    @Published private(set) var selectedVideoQuality: VideoQualityOption = .best
 
     private var currentProcess: Process?
+    private var currentProcessController: CheckProcessController?
     private var linkScanTask: Task<Void, Never>?
+    private var downloadTask: Task<Void, Never>?
+    private var isCancellationRequested = false
     private var currentJobStartDate: Date?
     private var currentDownloadedBytes: Int64?
     private var currentTotalBytes: Int64?
@@ -1480,20 +2289,42 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
     private var smoothedRemainingSeconds: Double?
     private var checkedSignature: String?
     private var checkedImageItemsByURL: [String: [ImageDownloadItem]] = [:]
+    private var checkedMetadataGroups: [[[String: Any]]] = []
+    private var checkedTotalBytes: Int64?
+    private var checkedPreviewImageURL: URL?
+    private var checkedMediaFormatCatalog: MediaFormatCatalog?
     private var failedJobCount = 0
     private var cachedDependencyStatus: (status: DependencyStatus, resolvedAt: Date)?
     private lazy var directoryPanel = makeDirectoryPanel()
     private lazy var cookiesFilePanel = makeCookiesFilePanel()
 
+    private static func translatedStatus(_ status: String, from oldLanguage: AppLanguage, to newLanguage: AppLanguage) -> String {
+        let exactStatuses: [(old: String, new: String)] = [
+            (oldLanguage.ready, newLanguage.ready),
+            (oldLanguage.downloading, newLanguage.downloading),
+            (oldLanguage.finished, newLanguage.finished),
+            (oldLanguage.cancelled, newLanguage.cancelled),
+            (oldLanguage.missingTools, newLanguage.missingTools),
+            (oldLanguage.error, newLanguage.error)
+        ]
+        if let match = exactStatuses.first(where: { $0.old == status }) {
+            return match.new
+        }
+
+        let downloadingPrefix = oldLanguage.downloading + " "
+        if status.hasPrefix(downloadingPrefix) {
+            return newLanguage.downloading + " " + status.dropFirst(downloadingPrefix.count)
+        }
+
+        return status
+    }
+
     var parsedURLs: [String] {
-        urls
-            .split(whereSeparator: \.isNewline)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
+        SingleURLInput.parse(urls).map { [$0] } ?? []
     }
 
     var canDownload: Bool {
-        !isRunning && hasValidCheck
+        !isRunning && hasValidCheck && currentSelectionIsFulfillable
     }
 
     var imagePreviewItems: [ImageDownloadItem] {
@@ -1501,7 +2332,39 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
     }
 
     var canUsePrimaryButton: Bool {
-        !isRunning && !parsedURLs.isEmpty && linkScanState != .checking
+        !isRunning
+            && parsedURLs.count == 1
+            && linkScanState != .checking
+            && (!hasValidCheck || currentSelectionIsFulfillable)
+    }
+
+    var qualityControlTitle: String {
+        switch kind {
+        case .video:
+            return hasValidCheck ? selectedVideoQuality.label : "--"
+        case .audio:
+            return "Best"
+        case .image:
+            return "--"
+        }
+    }
+
+    var isQualityControlEnabled: Bool {
+        kind == .video && hasValidCheck && !availableVideoQualities.isEmpty
+    }
+
+    var hasCheckedOptions: Bool {
+        hasValidCheck
+    }
+
+    var currentSelectionIsFulfillable: Bool {
+        CheckedSelectionReadiness.isFulfillable(
+            kind: kind,
+            catalog: checkedMediaFormatCatalog,
+            selectedVideoHeight: selectedVideoQuality.height,
+            includeVideoAudio: includeVideoAudio,
+            videoFormat: videoFormat
+        )
     }
 
     var displayedProgress: Double {
@@ -1553,6 +2416,11 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
                 "/usr/local/bin/ffmpeg",
                 "/usr/bin/ffmpeg"
             ]),
+            ffprobePath: findExecutable(named: "ffprobe", fallbackPaths: [
+                "/opt/homebrew/bin/ffprobe",
+                "/usr/local/bin/ffprobe",
+                "/usr/bin/ffprobe"
+            ]),
             galleryDLPath: findExecutable(named: "gallery-dl", fallbackPaths: [
                 "/opt/homebrew/bin/gallery-dl",
                 "/usr/local/bin/gallery-dl",
@@ -1592,8 +2460,16 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
         guard !isRunning else { return }
 
         linkScanTask?.cancel()
+        linkCheckFailure = nil
+        userFacingErrorMessage = nil
         checkedSignature = nil
         checkedImageItemsByURL = [:]
+        checkedMetadataGroups = []
+        checkedTotalBytes = nil
+        checkedPreviewImageURL = nil
+        checkedMediaFormatCatalog = nil
+        availableVideoQualities = []
+        selectedVideoQuality = .best
         mediaSummary = nil
         completedJobCount = 0
         progressFraction = 0
@@ -1603,12 +2479,62 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
         resetTransferEstimates()
 
         let urls = parsedURLs
-        guard !urls.isEmpty else {
-            linkScanState = .empty
+        guard urls.count == 1 else {
+            linkScanState = self.urls.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .empty : .unavailable
             return
         }
 
         linkScanState = .needsCheck(count: urls.count)
+    }
+
+    func selectVideoQuality(_ option: VideoQualityOption) {
+        guard kind == .video, availableVideoQualities.contains(option) else { return }
+        selectedVideoQuality = option
+        refreshCheckedSelection()
+    }
+
+    func refreshCheckedSelection() {
+        guard hasValidCheck, !checkedMetadataGroups.isEmpty else { return }
+
+        if kind == .video, let catalog = checkedMediaFormatCatalog {
+            availableVideoQualities = catalog.compatibleVideoQualities(
+                outputFormat: videoFormat,
+                includeAudio: includeVideoAudio
+            )
+            if !availableVideoQualities.contains(selectedVideoQuality) {
+                selectedVideoQuality = availableVideoQualities.first ?? .best
+            }
+        }
+
+        let selection = selectedVideoStreamSelection
+        let estimatedBytes: Int64?
+        switch kind {
+        case .video:
+            estimatedBytes = selection?.estimatedBytes
+        case .audio:
+            estimatedBytes = checkedMediaFormatCatalog?.checkedAudioSelection?.estimatedBytes
+        case .image:
+            estimatedBytes = nil
+        }
+        let refreshedSummary = MediaSummary.make(
+            metadataGroups: checkedMetadataGroups,
+            fallbackURLs: parsedURLs,
+            kind: kind,
+            videoFormat: videoFormat,
+            audioFormat: audioFormat,
+            quality: quality,
+            videoQualityLabel: kind == .video ? selectedVideoQuality.label : nil,
+            totalBytes: estimatedBytes,
+            imageTotalBytes: kind == .image ? ImageItemSize.totalBytes(itemsByURL: checkedImageItemsByURL) : nil,
+            previewImageURL: checkedPreviewImageURL
+        )
+        if kind == .image,
+           let refreshedSummary,
+           let outputFilename = ImagePreviewSummary.outputFilename(items: imagePreviewItems) {
+            mediaSummary = refreshedSummary.replacingOutputFilename(outputFilename)
+        } else {
+            mediaSummary = refreshedSummary
+        }
     }
 
     func performPrimaryAction() {
@@ -1619,18 +2545,50 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
         }
     }
 
+    func submitURLFromEditor() {
+        let action = URLSubmitPolicy.action(
+            hasValidURL: parsedURLs.count == 1,
+            isRunning: isRunning,
+            scanState: linkScanState,
+            hasCheckedOptions: hasCheckedOptions
+        )
+        guard action == .check else { return }
+        checkLinks()
+    }
+
     func checkLinks() {
+        checkLinks(forceRefresh: false)
+    }
+
+    func recheckLinks() {
+        checkLinks(forceRefresh: true)
+    }
+
+    private func checkLinks(forceRefresh: Bool) {
         linkScanTask?.cancel()
+        linkCheckFailure = nil
 
         let urls = parsedURLs
-        guard !urls.isEmpty else {
-            linkScanState = .empty
+        guard urls.count == 1 else {
+            linkScanState = self.urls.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .empty : .unavailable
             checkedSignature = nil
             return
         }
 
-        if hasValidCheck {
+        if LinkCheckCachePolicy.shouldReuse(hasValidCheck: hasValidCheck, forceRefresh: forceRefresh) {
             return
+        }
+
+        if forceRefresh {
+            checkedSignature = nil
+            checkedImageItemsByURL = [:]
+            checkedMetadataGroups = []
+            checkedTotalBytes = nil
+            checkedPreviewImageURL = nil
+            checkedMediaFormatCatalog = nil
+            availableVideoQualities = []
+            selectedVideoQuality = .best
+            mediaSummary = nil
         }
 
         guard !needsCookiesFile(for: urls) else {
@@ -1667,11 +2625,18 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
                     guard let self, !Task.isCancelled else { return }
                     let imageCount = result.itemsByURL.values.reduce(0) { $0 + $1.count }
                     let previewImageURL = result.itemsByURL.values.flatMap { $0 }.first?.url
-                    let state: LinkScanState = imageCount > 0
-                        ? .ready(totalBytes: nil, count: urls.count, previewImageURL: previewImageURL)
-                        : .unavailable
+                    let detectedFailure = LinkCheckFailure.detect(in: result.diagnosticLog)
+                    let state: LinkScanState
+                    if imageCount > 0 {
+                        state = .ready(totalBytes: nil, count: urls.count, previewImageURL: previewImageURL)
+                    } else if detectedFailure == .galleryRuntimeUnavailable {
+                        state = .missingTools
+                    } else {
+                        state = .unavailable
+                    }
 
                     self.linkScanState = state
+                    self.linkCheckFailure = detectedFailure
                     self.checkedSignature = {
                         if case .ready = state {
                             return signature
@@ -1680,6 +2645,7 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
                         return nil
                     }()
                     self.checkedImageItemsByURL = self.checkedSignature == nil ? [:] : result.itemsByURL
+                    self.checkedPreviewImageURL = self.checkedSignature == nil ? nil : previewImageURL
                     if case let .ready(totalBytes, _, previewImageURL) = state {
                         let firstItem = result.itemsByURL.values.flatMap { $0 }.first
                         self.mediaSummary = MediaSummary(
@@ -1688,7 +2654,9 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
                             creator: "",
                             duration: "--",
                             estimatedSize: totalBytes.map(MediaSummary.byteLabelForUI) ?? "--",
-                            outputFilename: firstItem?.suggestedFilename(index: 1, total: 1) ?? "Image [Image].jpg",
+                            outputFilename: ImagePreviewSummary.outputFilename(
+                                items: result.itemsByURL.values.flatMap { $0 }
+                            ) ?? "Image [Image].jpg",
                             previewImageURL: previewImageURL
                         )
                     } else {
@@ -1725,13 +2693,30 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
             await MainActor.run {
                 guard let self, !Task.isCancelled else { return }
                 let imageItemsByURL = ImageItemCache.make(urls: urls, metadataGroups: result.metadataGroups)
-                let validatedState = ImageCheckValidator.validatedState(
+                let catalog = MediaFormatCatalog.make(metadata: result.metadataGroups.first?.first ?? [:])
+                var validatedState = ImageCheckValidator.validatedState(
                     kind: self.kind,
                     scanState: result.state,
                     imageItemsByURL: imageItemsByURL
                 )
+                if case .ready = validatedState {
+                    if self.kind == .video,
+                       !CheckedSelectionReadiness.hasVideoOptions(
+                        catalog,
+                        outputFormat: self.videoFormat
+                       ) {
+                        validatedState = .unavailable
+                    } else if self.kind == .audio, catalog.checkedAudioSelection == nil {
+                        validatedState = .unavailable
+                    }
+                }
 
                 self.linkScanState = validatedState
+                if case .unavailable = validatedState {
+                    self.linkCheckFailure = LinkCheckFailure.detect(in: result.diagnosticLog)
+                } else {
+                    self.linkCheckFailure = nil
+                }
                 self.checkedSignature = {
                     if case .ready = validatedState {
                         return signature
@@ -1741,17 +2726,33 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
                 }()
                 self.checkedImageItemsByURL = self.checkedSignature == nil ? [:] : imageItemsByURL
                 if case let .ready(totalBytes, _, previewImageURL) = validatedState {
-                    self.mediaSummary = MediaSummary.make(
-                        metadataGroups: result.metadataGroups,
-                        fallbackURLs: urls,
-                        kind: self.kind,
-                        videoFormat: self.videoFormat,
-                        audioFormat: self.audioFormat,
-                        quality: self.quality,
-                        totalBytes: totalBytes,
-                        previewImageURL: previewImageURL
-                    )
+                    self.checkedMetadataGroups = result.metadataGroups
+                    self.checkedTotalBytes = totalBytes
+                    self.checkedPreviewImageURL = previewImageURL
+                    if self.kind == .video {
+                        self.checkedMediaFormatCatalog = catalog
+                        self.availableVideoQualities = catalog.compatibleVideoQualities(
+                            outputFormat: self.videoFormat,
+                            includeAudio: self.includeVideoAudio
+                        )
+                        self.selectedVideoQuality = self.availableVideoQualities.first ?? .best
+                    } else if self.kind == .audio {
+                        self.checkedMediaFormatCatalog = catalog
+                        self.availableVideoQualities = []
+                        self.selectedVideoQuality = .best
+                    } else {
+                        self.checkedMediaFormatCatalog = nil
+                        self.availableVideoQualities = []
+                        self.selectedVideoQuality = .best
+                    }
+                    self.refreshCheckedSelection()
                 } else {
+                    self.checkedMetadataGroups = []
+                    self.checkedTotalBytes = nil
+                    self.checkedPreviewImageURL = nil
+                    self.checkedMediaFormatCatalog = nil
+                    self.availableVideoQualities = []
+                    self.selectedVideoQuality = .best
                     self.mediaSummary = nil
                 }
 
@@ -1774,11 +2775,27 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
     func startDownload() {
         guard canDownload else { return }
 
+        userFacingErrorMessage = nil
+
+        if kind == .video, selectedVideoStreamSelection == nil {
+            checkedSignature = nil
+            linkScanState = .needsCheck(count: 1)
+            appendLog("The checked video format is unavailable. Check the URL again.\n")
+            return
+        }
+        if kind == .audio, checkedMediaFormatCatalog?.checkedAudioSelection == nil {
+            checkedSignature = nil
+            linkScanState = .needsCheck(count: 1)
+            appendLog("The checked audio format is unavailable. Check the URL again.\n")
+            return
+        }
+
         let dependencies = dependencyStatus
         guard let ytDlpPath = dependencies.ytDlpPath else {
             appendLog(language.missingToolLog(
                 ytDlpFound: false,
-                ffmpegFound: dependencies.ffmpegPath != nil
+                ffmpegFound: dependencies.ffmpegPath != nil,
+                ffprobeFound: dependencies.ffprobePath != nil
             ))
             status = language.missingTools
             return
@@ -1788,13 +2805,25 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
         if kind != .image, dependencies.ffmpegPath == nil {
             appendLog(language.missingToolLog(
                 ytDlpFound: true,
-                ffmpegFound: false
+                ffmpegFound: false,
+                ffprobeFound: dependencies.ffprobePath != nil
+            ))
+            status = language.missingTools
+            return
+        }
+
+        if kind != .image, dependencies.ffprobePath == nil {
+            appendLog(language.missingToolLog(
+                ytDlpFound: true,
+                ffmpegFound: true,
+                ffprobeFound: false
             ))
             status = language.missingTools
             return
         }
 
         isRunning = true
+        isCancellationRequested = false
         status = language.downloading
         activeJobIndex = nil
         completedJobCount = 0
@@ -1809,6 +2838,7 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
         let jobs = parsedURLs.enumerated().map { offset, url in
             DownloadJob(
                 url: url,
+                kind: kind,
                 arguments: kind == .image
                     ? DownloadCommandBuilder.scanArguments(for: url, configuration: downloadConfiguration)
                     : DownloadCommandBuilder.arguments(for: url, ffmpegPath: ffmpegPath, configuration: downloadConfiguration),
@@ -1818,10 +2848,10 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
             )
         }
 
-        Task.detached(priority: .userInitiated) { [weak self] in
+        downloadTask = Task.detached(priority: .userInitiated) { [weak self] in
             for job in jobs {
                 guard await self?.isStillRunning() == true else { break }
-                if await self?.currentKind() == .image {
+                if job.kind == .image {
                     await self?.runSingleImageDownload(ytDlpPath: ytDlpPath, job: job)
                 } else {
                     await self?.runSingleDownload(ytDlpPath: ytDlpPath, job: job)
@@ -1834,8 +2864,11 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
     }
 
     func repeatDownload(_ item: DownloadHistoryItem) {
+        guard !isRunning else { return }
         restoreHistoryItem(item)
-        startDownload()
+        if canDownload {
+            startDownload()
+        }
     }
 
     func removeDownloadHistoryItem(_ item: DownloadHistoryItem) {
@@ -1847,8 +2880,9 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
     }
 
     func cancelDownload() {
-        currentProcess?.terminate()
-        isRunning = false
+        downloadTask?.cancel()
+        currentProcessController?.stop(.cancelled)
+        isCancellationRequested = true
         activeJobIndex = nil
         status = language.cancelled
         speedLabel = "0 KB/s"
@@ -1918,21 +2952,21 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
     }
 
     private func isStillRunning() -> Bool {
-        isRunning
+        isRunning && !isCancellationRequested
     }
 
-    private func currentKind() -> DownloadKind {
-        kind
-    }
-
-    private func finishQueue() {
+    func finishQueue() {
+        let wasCancelled = isCancellationRequested || status == language.cancelled
         currentProcess = nil
+        currentProcessController = nil
+        downloadTask = nil
         isRunning = false
+        isCancellationRequested = false
         activeJobIndex = nil
         speedLabel = "0 KB/s"
         etaLabel = "--"
         resetTransferEstimates()
-        if status != language.cancelled {
+        if !wasCancelled {
             if failedJobCount > 0 {
                 status = language.error
                 appendLog("\n\(language.error).\n")
@@ -1944,7 +2978,8 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
         }
     }
 
-    private func beginJob(_ job: DownloadJob) {
+    private func beginJob(_ job: DownloadJob) -> Bool {
+        guard isRunning, !isCancellationRequested else { return false }
         activeJobIndex = job.index
         progressFraction = 0
         speedLabel = "0 KB/s"
@@ -1953,10 +2988,12 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
         resetTransferEstimates()
         status = "\(language.downloading) \(job.index)/\(job.total)"
         appendLog("\n[\(job.index)/\(job.total)] \(job.url)\n")
+        return true
     }
 
-    private func setCurrentProcess(_ process: Process?) {
+    private func setCurrentProcess(_ process: Process?, controller: CheckProcessController?) {
         currentProcess = process
+        currentProcessController = controller
     }
 
     private func finishJob(_ job: DownloadJob, exitCode: Int32) {
@@ -1970,7 +3007,13 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
             etaLabel = "--"
             failedJobCount += 1
             status = language.error
+            userFacingErrorMessage = language.downloadFailed
             appendLog("[\(job.index)/\(job.total)] Exit code: \(exitCode).\n")
+            if kind == .video || kind == .audio {
+                checkedSignature = nil
+                linkScanState = .needsCheck(count: parsedURLs.count)
+                appendLog("The checked media format may no longer be available. Check the URL again before downloading.\n")
+            }
         }
     }
 
@@ -1990,9 +3033,12 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
             quality: quality,
             includeVideoAudio: includeVideoAudio,
             includeSubtitles: includeSubtitles,
-            embedMetadata: embedMetadata,
+            embedArtwork: embedArtwork,
             outputDirectory: outputDirectory,
-            imageItemsByURL: checkedImageItemsByURL
+            imageItemsByURL: checkedImageItemsByURL,
+            checkedMediaFormatCatalog: checkedMediaFormatCatalog,
+            selectedVideoQuality: selectedVideoQuality,
+            checkedSignature: checkedSignature
         )
         downloadHistory = DownloadHistoryList.prepending(item, to: downloadHistory)
     }
@@ -2005,12 +3051,31 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
         quality = item.quality
         includeVideoAudio = item.includeVideoAudio
         includeSubtitles = item.includeSubtitles
-        embedMetadata = item.embedMetadata
+        embedArtwork = item.embedArtwork
         outputDirectory = item.outputDirectory
         mediaSummary = item.mediaSummary
         checkedImageItemsByURL = item.imageItemsByURL
-        linkScanState = .ready(totalBytes: nil, count: item.sourceURLs.count, previewImageURL: item.previewImageURL)
-        checkedSignature = currentSignature
+        checkedMetadataGroups = [[[
+            "title": item.title,
+            "extractor": item.source
+        ]]]
+        checkedTotalBytes = nil
+        checkedPreviewImageURL = item.previewImageURL
+        checkedMediaFormatCatalog = item.checkedMediaFormatCatalog
+        selectedVideoQuality = item.selectedVideoQuality
+        availableVideoQualities = item.kind == .video
+            ? (item.checkedMediaFormatCatalog?.compatibleVideoQualities(
+                outputFormat: item.videoFormat,
+                includeAudio: item.includeVideoAudio
+            ) ?? [item.selectedVideoQuality])
+            : []
+        if item.checkedSignature == currentSignature {
+            linkScanState = .ready(totalBytes: nil, count: item.sourceURLs.count, previewImageURL: item.previewImageURL)
+            checkedSignature = item.checkedSignature
+        } else {
+            linkScanState = .needsCheck(count: item.sourceURLs.count)
+            checkedSignature = nil
+        }
         completedJobCount = 0
         progressFraction = 0
         status = language.ready
@@ -2018,33 +3083,40 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
     }
 
     private var outputTemplate: String {
-        let descriptor: String
-        switch kind {
-        case .video:
-            descriptor = quality.filenameLabel
-        case .audio:
-            descriptor = audioFormat.rawValue.uppercased()
-        case .image:
-            descriptor = "Image"
-        }
+        OutputNaming.template(
+            kind: kind,
+            videoQualityLabel: kind == .video ? selectedVideoQuality.label : nil
+        )
+    }
 
-        return "%(title)s [\(descriptor)].%(ext)s"
+    private var selectedVideoStreamSelection: VideoStreamSelection? {
+        checkedMediaFormatCatalog?.videoSelection(
+            height: selectedVideoQuality.height,
+            includeAudio: includeVideoAudio,
+            outputFormat: videoFormat
+        )
     }
 
     private var downloadConfiguration: DownloadConfiguration {
-        DownloadConfiguration(
+        var configuration = DownloadConfiguration(
             kind: kind,
             videoFormat: videoFormat,
             audioFormat: audioFormat,
             quality: quality,
             includeVideoAudio: includeVideoAudio,
             includeSubtitles: includeSubtitles,
-            embedMetadata: embedMetadata,
+            embedArtwork: embedArtwork,
             cookieSource: cookieSource,
             cookieFilePath: cookieFilePath,
             outputDirectory: outputDirectory,
             outputTemplate: outputTemplate
         )
+        if kind == .video {
+            configuration.selectedVideoFormatSelector = selectedVideoStreamSelection?.selector
+        } else if kind == .audio {
+            configuration.selectedAudioFormatSelector = checkedMediaFormatCatalog?.checkedAudioSelection?.formatID
+        }
+        return configuration
     }
 
     private var currentSignature: String {
@@ -2056,7 +3128,7 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
             quality: quality,
             includeVideoAudio: includeVideoAudio,
             includeSubtitles: includeSubtitles,
-            embedMetadata: embedMetadata,
+            embedArtwork: embedArtwork,
             cookieSource: cookieSource,
             cookieFilePath: cookieFilePath
         )
@@ -2073,7 +3145,7 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
     }
 
     private nonisolated func runSingleDownload(ytDlpPath: String, job: DownloadJob) async {
-        await beginJob(job)
+        guard await beginJob(job) else { return }
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: ytDlpPath)
@@ -2082,10 +3154,12 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
-        await setCurrentProcess(process)
+        let controller = CheckProcessController()
+        await setCurrentProcess(process, controller: controller)
 
         do {
-            try process.run()
+            try Task.checkCancellation()
+            guard try controller.start(process) else { return }
             let handle = pipe.fileHandleForReading
             while process.isRunning {
                 let data = handle.availableData
@@ -2100,18 +3174,26 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
                 await appendLog(remainingText)
             }
 
+            let stopReason = controller.complete()
+            guard stopReason != .cancelled, !Task.isCancelled else { return }
             await finishJob(job, exitCode: process.terminationStatus)
+        } catch is CancellationError {
+            controller.stop(.cancelled)
+            _ = controller.complete()
         } catch {
-            await failToStart(error)
+            _ = controller.complete()
+            if !Task.isCancelled {
+                await failToStart(error)
+            }
         }
     }
 
     private nonisolated func runSingleImageDownload(ytDlpPath: String, job: DownloadJob) async {
-        await beginJob(job)
+        guard await beginJob(job) else { return }
 
         let imageItems: [ImageDownloadItem]
         if job.imageItems.isEmpty {
-            guard let metadataItems = LinkScanner.metadataItems(ytDlpPath: ytDlpPath, arguments: job.arguments) else {
+            guard let metadataItems = await LinkScanner.metadataItems(ytDlpPath: ytDlpPath, arguments: job.arguments) else {
                 await finishJob(job, exitCode: 1)
                 return
             }
@@ -2130,9 +3212,12 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
             guard await isStillRunning() else { break }
             do {
                 let filename = item.suggestedFilename(index: offset + 1, total: imageItems.count)
-                try await downloadImage(item, filename: filename)
+                let savedFilename = try await downloadImage(item, filename: filename)
                 completedItems += 1
-                await appendLog("[image] Saved \(filename)\n")
+                if offset == 0 {
+                    await updateImageOutputFilename(savedFilename)
+                }
+                await appendLog("[image] Saved \(savedFilename)\n")
                 await updateImageProgress(completed: completedItems, total: imageItems.count)
             } catch {
                 await appendLog("[image] Failed: \(error.localizedDescription)\n")
@@ -2142,7 +3227,8 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
         await finishJob(job, exitCode: completedItems == imageItems.count ? 0 : 1)
     }
 
-    private nonisolated func downloadImage(_ item: ImageDownloadItem, filename: String) async throws {
+    private nonisolated func downloadImage(_ item: ImageDownloadItem, filename: String) async throws -> String {
+        let directory = await outputDirectoryPath()
         var request = URLRequest(url: item.url)
         for (field, value) in item.httpHeaders {
             request.setValue(value, forHTTPHeaderField: field)
@@ -2154,9 +3240,18 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
             throw ImageDownloadError.badStatus(httpResponse.statusCode)
         }
 
-        let directory = await outputDirectoryPath()
-        let destination = URL(fileURLWithPath: directory).appendingPathComponent(filename)
-        try data.write(to: destination, options: .atomic)
+        let destination = try ImageFileWriter.write(
+            data,
+            directory: URL(fileURLWithPath: directory),
+            filename: filename
+        )
+        return destination.lastPathComponent
+    }
+
+    private func updateImageOutputFilename(_ filename: String) {
+        if let mediaSummary {
+            self.mediaSummary = mediaSummary.replacingOutputFilename(filename)
+        }
     }
 
     private func outputDirectoryPath() -> String {
@@ -2170,9 +3265,11 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
         etaLabel = completed == total ? "--" : etaLabel
     }
 
-    private func failToStart(_ error: Error) {
+    func failToStart(_ error: Error) {
+        failedJobCount += 1
         appendLog("Failed to start yt-dlp: \(error.localizedDescription)\n")
         status = language.error
+        userFacingErrorMessage = error.localizedDescription
         speedLabel = "0 KB/s"
         etaLabel = "--"
         resetTransferEstimates()
@@ -2350,14 +3447,22 @@ enum LinkScanner {
         await scanWithMetadata(ytDlpPath: ytDlpPath, argumentGroups: argumentGroups).state
     }
 
-    static func scanWithMetadata(ytDlpPath: String, argumentGroups: [[String]]) async -> LinkScanResult {
+    static func scanWithMetadata(
+        ytDlpPath: String,
+        argumentGroups: [[String]],
+        timeout: Duration = .seconds(90)
+    ) async -> LinkScanResult {
         var totalBytes: Int64 = 0
         var hasKnownSize = false
         var previewImageURL: URL?
         var metadataGroups: [[[String: Any]]] = []
         var diagnosticLog = ""
 
-        for scanOutput in await metadataScanOutputs(ytDlpPath: ytDlpPath, argumentGroups: argumentGroups) {
+        for scanOutput in await metadataScanOutputs(
+            ytDlpPath: ytDlpPath,
+            argumentGroups: argumentGroups,
+            timeout: timeout
+        ) {
             diagnosticLog += scanOutput.diagnosticLog
 
             guard !scanOutput.items.isEmpty else {
@@ -2386,9 +3491,21 @@ enum LinkScanner {
         )
     }
 
-    private static func metadataScanOutputs(ytDlpPath: String, argumentGroups: [[String]]) async -> [MetadataScanOutput] {
+    private static func metadataScanOutputs(
+        ytDlpPath: String,
+        argumentGroups: [[String]],
+        timeout: Duration
+    ) async -> [MetadataScanOutput] {
         guard argumentGroups.count > 1 else {
-            return argumentGroups.map { metadataScan(ytDlpPath: ytDlpPath, arguments: $0) }
+            var outputs: [MetadataScanOutput] = []
+            for arguments in argumentGroups {
+                outputs.append(await metadataScan(
+                    ytDlpPath: ytDlpPath,
+                    arguments: arguments,
+                    timeout: timeout
+                ))
+            }
+            return outputs
         }
 
         return await withTaskGroup(of: OrderedMetadataScanOutput.self) { group in
@@ -2396,7 +3513,11 @@ enum LinkScanner {
                 group.addTask {
                     OrderedMetadataScanOutput(
                         index: index,
-                        output: metadataScan(ytDlpPath: ytDlpPath, arguments: arguments)
+                        output: await metadataScan(
+                            ytDlpPath: ytDlpPath,
+                            arguments: arguments,
+                            timeout: timeout
+                        )
                     )
                 }
             }
@@ -2410,12 +3531,20 @@ enum LinkScanner {
         }
     }
 
-    static func metadataItems(ytDlpPath: String, arguments: [String]) -> [[String: Any]]? {
-        let output = metadataScan(ytDlpPath: ytDlpPath, arguments: arguments)
+    static func metadataItems(ytDlpPath: String, arguments: [String]) async -> [[String: Any]]? {
+        let output = await metadataScan(
+            ytDlpPath: ytDlpPath,
+            arguments: arguments,
+            timeout: .seconds(90)
+        )
         return output.items.isEmpty ? nil : output.items
     }
 
-    private static func metadataScan(ytDlpPath: String, arguments: [String]) -> MetadataScanOutput {
+    private static func metadataScan(
+        ytDlpPath: String,
+        arguments: [String],
+        timeout: Duration
+    ) async -> MetadataScanOutput {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: ytDlpPath)
         process.arguments = arguments
@@ -2423,27 +3552,55 @@ enum LinkScanner {
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
+        let controller = CheckProcessController()
 
-        do {
-            try process.run()
-        } catch {
-            return MetadataScanOutput(items: [], diagnosticLog: "Failed to start yt-dlp: \(error.localizedDescription)\n")
+        return await withTaskCancellationHandler {
+            await Task.detached(priority: .userInitiated) {
+                let timeoutTask = Task.detached {
+                    do {
+                        try await Task.sleep(for: timeout)
+                    } catch {
+                        return
+                    }
+                    controller.stop(.timedOut)
+                }
+                defer { timeoutTask.cancel() }
+
+                do {
+                    guard try controller.start(process) else {
+                        return MetadataScanOutput(items: [], diagnosticLog: "")
+                    }
+                } catch {
+                    _ = controller.complete()
+                    return MetadataScanOutput(items: [], diagnosticLog: "Failed to start yt-dlp: \(error.localizedDescription)\n")
+                }
+
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                let stopReason = controller.complete()
+
+                if stopReason == .timedOut {
+                    return MetadataScanOutput(items: [], diagnosticLog: "Link check timed out after 90 seconds.\n")
+                }
+                if stopReason == .cancelled {
+                    return MetadataScanOutput(items: [], diagnosticLog: "")
+                }
+
+                guard let output = String(data: data, encoding: .utf8) else {
+                    let exitLog = process.terminationStatus == 0 ? "" : "yt-dlp exited with code \(process.terminationStatus).\n"
+                    return MetadataScanOutput(items: [], diagnosticLog: exitLog)
+                }
+
+                let parsedOutput = MetadataScanOutput.parse(output)
+                if process.terminationStatus == 0 || !parsedOutput.diagnosticLog.isEmpty {
+                    return parsedOutput
+                }
+
+                return MetadataScanOutput(items: parsedOutput.items, diagnosticLog: "yt-dlp exited with code \(process.terminationStatus).\n")
+            }.value
+        } onCancel: {
+            controller.stop(.cancelled)
         }
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-
-        guard let output = String(data: data, encoding: .utf8) else {
-            let exitLog = process.terminationStatus == 0 ? "" : "yt-dlp exited with code \(process.terminationStatus).\n"
-            return MetadataScanOutput(items: [], diagnosticLog: exitLog)
-        }
-
-        let parsedOutput = MetadataScanOutput.parse(output)
-        if process.terminationStatus == 0 || !parsedOutput.diagnosticLog.isEmpty {
-            return parsedOutput
-        }
-
-        return MetadataScanOutput(items: parsedOutput.items, diagnosticLog: "yt-dlp exited with code \(process.terminationStatus).\n")
     }
 
     private static func estimatedBytes(from metadata: [String: Any]) -> Int64? {
@@ -2503,9 +3660,10 @@ enum LinkScanner {
 struct PlaceholderTextEditor: NSViewRepresentable {
     @Binding var text: String
     let placeholder: String
+    let onSubmit: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text)
+        Coordinator(text: $text, onSubmit: onSubmit)
     }
 
     func makeNSView(context: Context) -> PlaceholderTextEditorHost {
@@ -2518,21 +3676,30 @@ struct PlaceholderTextEditor: NSViewRepresentable {
 
     func updateNSView(_ nsView: PlaceholderTextEditorHost, context: Context) {
         context.coordinator.text = $text
+        context.coordinator.onSubmit = onSubmit
         nsView.update(text: text, placeholder: placeholder)
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var text: Binding<String>
+        var onSubmit: () -> Void
         weak var host: PlaceholderTextEditorHost?
 
-        init(text: Binding<String>) {
+        init(text: Binding<String>, onSubmit: @escaping () -> Void) {
             self.text = text
+            self.onSubmit = onSubmit
         }
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             text.wrappedValue = textView.string
             host?.setPlaceholderVisible(textView.string.isEmpty)
+        }
+
+        func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            guard URLInputCommand.isSubmit(commandSelector) else { return false }
+            onSubmit()
+            return true
         }
     }
 }
@@ -2659,22 +3826,16 @@ struct ContentView: View {
             model.resetLinkScan()
         }
         .onChange(of: model.quality) {
-            model.resetLinkScan()
+            model.refreshCheckedSelection()
         }
         .onChange(of: model.videoFormat) {
-            model.resetLinkScan()
+            model.refreshCheckedSelection()
         }
         .onChange(of: model.audioFormat) {
-            model.resetLinkScan()
+            model.refreshCheckedSelection()
         }
         .onChange(of: model.includeVideoAudio) {
-            model.resetLinkScan()
-        }
-        .onChange(of: model.includeSubtitles) {
-            model.resetLinkScan()
-        }
-        .onChange(of: model.embedMetadata) {
-            model.resetLinkScan()
+            model.refreshCheckedSelection()
         }
         .onChange(of: model.cookieSource) {
             model.resetLinkScan()
@@ -2806,7 +3967,11 @@ struct ContentView: View {
                 .foregroundStyle(muted)
             }
 
-            PlaceholderTextEditor(text: $model.urls, placeholder: model.language.linksPlaceholder)
+            PlaceholderTextEditor(
+                text: $model.urls,
+                placeholder: model.language.linksPlaceholder,
+                onSubmit: model.submitURLFromEditor
+            )
                 .frame(height: height)
             .background(Color(nsColor: .textBackgroundColor))
             .overlay(alignment: .top) { Rectangle().fill(separator).frame(height: 1) }
@@ -2843,13 +4008,22 @@ struct ContentView: View {
 
                     optionRow(title: model.language.quality) {
                         optionStrip {
-                            ForEach(Quality.allCases) { quality in
+                            if model.availableVideoQualities.isEmpty {
                                 segmentButton(
-                                    title: model.language.qualityLabel(quality),
-                                    isSelected: model.quality == quality,
-                                    hoverTarget: .quality(quality)
-                                ) {
-                                    model.quality = quality
+                                    title: "--",
+                                    isSelected: false,
+                                    hoverTarget: .quality(.p1080)
+                                ) {}
+                                .disabled(true)
+                            } else {
+                                ForEach(model.availableVideoQualities) { quality in
+                                    segmentButton(
+                                        title: quality.label,
+                                        isSelected: model.selectedVideoQuality == quality,
+                                        hoverTarget: .quality(.p1080)
+                                    ) {
+                                        model.selectVideoQuality(quality)
+                                    }
                                 }
                             }
                         }
@@ -2872,6 +4046,17 @@ struct ContentView: View {
                                 model.audioFormat = format
                             }
                         }
+                    }
+                }
+
+                optionRow(title: model.language.quality) {
+                    optionStrip {
+                        segmentButton(
+                            title: "Best",
+                            isSelected: true,
+                            hoverTarget: .quality(.p1080)
+                        ) {}
+                        .disabled(true)
                     }
                 }
             }
@@ -2898,15 +4083,24 @@ struct ContentView: View {
                 }
             }
 
-            VStack(alignment: .leading, spacing: 9) {
-                Toggle(model.language.metadata, isOn: $model.embedMetadata)
-                Toggle(model.language.subtitles, isOn: $model.includeSubtitles)
+            if model.kind != .image {
+                VStack(alignment: .leading, spacing: 9) {
+                    Toggle(model.language.metadata, isOn: .constant(true))
+                        .disabled(true)
+                    if model.kind == .video {
+                        Toggle(model.language.artwork, isOn: $model.embedArtwork)
+                        Toggle(model.language.subtitles, isOn: $model.includeSubtitles)
+                    } else {
+                        Toggle(model.language.artwork, isOn: .constant(false))
+                            .disabled(true)
+                        Toggle(model.language.subtitles, isOn: .constant(false))
+                            .disabled(true)
+                    }
+                }
+                .toggleStyle(.checkbox)
+                .font(AppTypography.font(size: AppTypography.bodySize, weight: .medium))
+                .foregroundStyle(secondary)
             }
-            .disabled(model.kind == .image)
-            .opacity(model.kind == .image ? 0.45 : 1)
-            .toggleStyle(.checkbox)
-            .font(AppTypography.font(size: AppTypography.bodySize, weight: .medium))
-            .foregroundStyle(secondary)
         }
     }
 
@@ -3346,9 +4540,11 @@ struct RedesignedContentView: View {
         case mode(DownloadKind)
     }
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var model = DownloadModel()
     @State private var hoveredTarget: HoverTarget?
     @State private var imagePreviewStartIndex = 0
+    @State private var imagePreviewPageDirection = 1
 
     private let canvas = Color(nsColor: .windowBackgroundColor)
     private let panelFill = Color(nsColor: .controlBackgroundColor).opacity(0.42)
@@ -3398,22 +4594,16 @@ struct RedesignedContentView: View {
             model.resetLinkScan()
         }
         .onChange(of: model.quality) {
-            model.resetLinkScan()
+            model.refreshCheckedSelection()
         }
         .onChange(of: model.videoFormat) {
-            model.resetLinkScan()
+            model.refreshCheckedSelection()
         }
         .onChange(of: model.audioFormat) {
-            model.resetLinkScan()
+            model.refreshCheckedSelection()
         }
         .onChange(of: model.includeVideoAudio) {
-            model.resetLinkScan()
-        }
-        .onChange(of: model.includeSubtitles) {
-            model.resetLinkScan()
-        }
-        .onChange(of: model.embedMetadata) {
-            model.resetLinkScan()
+            model.refreshCheckedSelection()
         }
         .onChange(of: model.cookieSource) {
             model.resetLinkScan()
@@ -3427,6 +4617,9 @@ struct RedesignedContentView: View {
                 itemCount: model.imagePreviewItems.count
             )
         }
+        .animation(AppMotion.stateAnimation(reduceMotion: reduceMotion), value: model.mediaSummary != nil)
+        .animation(AppMotion.stateAnimation(reduceMotion: reduceMotion), value: model.isRunning)
+        .animation(AppMotion.stateAnimation(reduceMotion: reduceMotion), value: model.downloadHistory.map(\.id))
     }
 
     private var background: some View {
@@ -3475,8 +4668,13 @@ struct RedesignedContentView: View {
                     .foregroundStyle(muted)
                     .frame(width: 34)
 
-                PlaceholderTextEditor(text: $model.urls, placeholder: model.language.linksPlaceholder)
+                PlaceholderTextEditor(
+                    text: $model.urls,
+                    placeholder: model.language.linksPlaceholder,
+                    onSubmit: model.submitURLFromEditor
+                )
                     .frame(height: 52)
+                    .disabled(model.isRunning)
 
                 inputTrailingControl
             }
@@ -3487,6 +4685,7 @@ struct RedesignedContentView: View {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .stroke(inputAccent, lineWidth: inputBorderWidth)
             )
+            .animation(AppMotion.fastAnimation(reduceMotion: reduceMotion), value: model.linkScanState)
 
             linkStatusLine
         }
@@ -3503,6 +4702,7 @@ struct RedesignedContentView: View {
             }
             .foregroundStyle(statusColor)
             .padding(.leading, 10)
+            .transition(appTransition(.topReveal))
         }
     }
 
@@ -3526,6 +4726,8 @@ struct RedesignedContentView: View {
                         summaryDetails(summary)
                     }
                 }
+                .id("summary-\(model.kind.rawValue)")
+                .transition(appTransition(.topReveal))
             } else {
                 HStack(spacing: 14) {
                     Image(systemName: "link.badge.plus")
@@ -3545,6 +4747,11 @@ struct RedesignedContentView: View {
 
                     Spacer()
                 }
+                .id("summary-placeholder-\(emptySummaryTitle)")
+                .transition(appTransition(AppMotion.summaryPlaceholderTransitionStyle(
+                    isChecking: model.linkScanState == .checking,
+                    reduceMotion: reduceMotion
+                )))
             }
         }
         .groupBoxStyle(PanelGroupBoxStyle())
@@ -3555,8 +4762,7 @@ struct RedesignedContentView: View {
             VStack(spacing: 18) {
                 modeAndFormatRow
 
-                HStack(spacing: 16) {
-                    fieldLabel(model.language.saveTo)
+                settingsControlRow(label: model.language.saveTo) {
                     outputDirectoryRow
                 }
 
@@ -3564,12 +4770,33 @@ struct RedesignedContentView: View {
                     cookiesSettingsRow
                 }
 
-                metadataRow
+                if shouldShowIncludeAudioRow {
+                    includeAudioRow
+                }
+
+                if shouldShowMetadataRow {
+                    metadataRow
+                }
             }
             .padding(.horizontal, 26)
             .padding(.vertical, 22)
+            .disabled(model.isRunning)
 
-            if shouldShowProgressBar {
+            progressMotionSection
+
+            actionMotionSection
+        }
+        .background(panelFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(separator)
+        )
+    }
+
+    @ViewBuilder
+    private var progressMotionSection: some View {
+        if shouldShowProgressBar {
+            VStack(spacing: 0) {
                 Rectangle()
                     .fill(separator)
                     .frame(height: 1)
@@ -3578,20 +4805,29 @@ struct RedesignedContentView: View {
                     .padding(.horizontal, 26)
                     .padding(.vertical, 14)
             }
+            .transition(appTransition(AppMotion.activityTransitionStyle(
+                isChecking: model.linkScanState == .checking,
+                reduceMotion: reduceMotion
+            )))
+        }
+    }
 
-            if shouldShowActionRow {
+    @ViewBuilder
+    private var actionMotionSection: some View {
+        if shouldShowActionRow {
+            VStack(spacing: 0) {
                 Rectangle()
                     .fill(separator)
                     .frame(height: 1)
 
                 HStack(spacing: 16) {
-                    if model.canDownload {
+                    if model.hasCheckedOptions && !model.isRunning {
                         secondaryButton(
                             title: model.language.check,
                             icon: "arrow.clockwise",
                             target: .check,
                             enabled: true,
-                            action: model.checkLinks
+                            action: model.recheckLinks
                         )
                     }
 
@@ -3612,12 +4848,11 @@ struct RedesignedContentView: View {
                 .padding(.horizontal, 26)
                 .padding(.vertical, 18)
             }
+            .transition(appTransition(AppMotion.activityTransitionStyle(
+                isChecking: model.linkScanState == .checking,
+                reduceMotion: reduceMotion
+            )))
         }
-        .background(panelFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(separator)
-        )
     }
 
     private var recentDownloadsSection: some View {
@@ -3645,9 +4880,11 @@ struct RedesignedContentView: View {
                             RoundedRectangle(cornerRadius: 9, style: .continuous)
                                 .stroke(separator)
                         )
+                        .transition(appTransition(.topReveal))
                 }
             }
         }
+        .transition(appTransition(.topReveal))
     }
 
     private var shouldShowRecentDownloads: Bool {
@@ -3659,7 +4896,7 @@ struct RedesignedContentView: View {
     }
 
     private var shouldShowProgressBar: Bool {
-        model.linkScanState == .checking || model.isRunning
+        model.linkScanState == .checking || model.isRunning || model.userFacingErrorMessage != nil
     }
 
     private var activityProgressRow: some View {
@@ -3694,12 +4931,20 @@ struct RedesignedContentView: View {
             return model.language.checkingLinks
         }
 
+        if model.userFacingErrorMessage != nil {
+            return model.language.error
+        }
+
         return model.status
     }
 
     private var progressDetail: String {
         if model.linkScanState == .checking {
             return localized(en: "Preparing link details", zh: "正在准备链接详情", zhHant: "正在準備連結詳細資料", th: "กำลังเตรียมรายละเอียดลิงก์")
+        }
+
+        if let message = model.userFacingErrorMessage {
+            return message
         }
 
         let percent = "\(Int(model.displayedProgress * 100))%"
@@ -3773,13 +5018,19 @@ struct RedesignedContentView: View {
 
                 if items.count > ImagePreviewLayout.visibleTileCount {
                     previewPagerButton(systemName: "chevron.left", isEnabled: canPageBackward) {
-                        imagePreviewStartIndex = ImagePreviewPager.previousIndex(from: imagePreviewStartIndex)
+                        imagePreviewPageDirection = -1
+                        runMotion {
+                            imagePreviewStartIndex = ImagePreviewPager.previousIndex(from: imagePreviewStartIndex)
+                        }
                     }
                     previewPagerButton(systemName: "chevron.right", isEnabled: canPageForward) {
-                        imagePreviewStartIndex = ImagePreviewPager.nextIndex(
-                            from: imagePreviewStartIndex,
-                            itemCount: items.count
-                        )
+                        imagePreviewPageDirection = 1
+                        runMotion {
+                            imagePreviewStartIndex = ImagePreviewPager.nextIndex(
+                                from: imagePreviewStartIndex,
+                                itemCount: items.count
+                            )
+                        }
                     }
                 }
             }
@@ -3793,6 +5044,8 @@ struct RedesignedContentView: View {
                     )
                 }
             }
+            .id(imagePreviewStartIndex)
+            .transition(imagePreviewPagingTransition)
         }
     }
 
@@ -3854,55 +5107,32 @@ struct RedesignedContentView: View {
 
     private var modeAndFormatRow: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(alignment: .center, spacing: 22) {
-                fieldLabel(localized(en: "Mode", zh: "模式", zhHant: "模式", th: "โหมด"))
-                modeControl
-
-                Spacer(minLength: 12)
-
-                if model.kind.usesFormatAndQualityControls {
-                    controlField(title: localized(en: "Format", zh: "格式", zhHant: "格式", th: "รูปแบบ")) {
-                        formatPicker
+            settingsControlRow(label: localized(en: "Mode", zh: "模式", zhHant: "模式", th: "โหมด")) {
+                ZStack(alignment: .leading) {
+                    HStack {
+                        Spacer(minLength: AppControlMetrics.settingsOutputGroupSpacing)
+                        formatQualityControls
                     }
 
-                    controlField(title: model.language.quality) {
-                        qualityPicker
-                    }
-                } else {
-                    imageOriginalFormatField
+                    modeControl
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             VStack(alignment: .leading, spacing: 16) {
-                HStack(spacing: 16) {
-                    fieldLabel(localized(en: "Mode", zh: "模式", zhHant: "模式", th: "โหมด"))
+                settingsControlRow(label: localized(en: "Mode", zh: "模式", zhHant: "模式", th: "โหมด")) {
                     modeControl
-                    Spacer(minLength: 0)
                 }
 
-                HStack(spacing: 18) {
-                    if model.kind.usesFormatAndQualityControls {
-                        controlField(title: localized(en: "Format", zh: "格式", zhHant: "格式", th: "รูปแบบ")) {
-                            formatPicker
-                        }
-
-                        controlField(title: model.language.quality) {
-                            qualityPicker
-                        }
-                    } else {
-                        imageOriginalFormatField
-                    }
-
-                    Spacer(minLength: 0)
+                settingsControlRow(label: localized(en: "Format", zh: "格式", zhHant: "格式", th: "รูปแบบ")) {
+                    formatQualityControls
                 }
             }
         }
     }
 
     private var cookiesSettingsRow: some View {
-        HStack(spacing: 16) {
-            fieldLabel(model.language.cookies)
-
+        settingsControlRow(label: model.language.cookies) {
             HStack(spacing: 12) {
                 cookieSourcePicker
                     .frame(width: 190)
@@ -3917,26 +5147,38 @@ struct RedesignedContentView: View {
         }
     }
 
-    private var metadataRow: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 26) {
-                fieldLabel(localized(en: "Metadata", zh: "元数据", zhHant: "中繼資料", th: "เมทาดาต้า"))
-                metadataToggle
-                Spacer()
-                subtitlesToggle
-            }
+    private var shouldShowIncludeAudioRow: Bool {
+        SettingsLayout.rows(
+            for: model.kind,
+            showsCookies: CookiePickerVisibility.shouldShow(for: model.urls)
+        ).contains(.includeAudio)
+    }
 
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 16) {
-                    fieldLabel(localized(en: "Metadata", zh: "元数据", zhHant: "中繼資料", th: "เมทาดาต้า"))
-                    metadataToggle
-                    Spacer(minLength: 0)
-                }
-                HStack(spacing: 16) {
-                    fieldLabel(model.language.subtitles)
-                    subtitlesToggle
-                    Spacer(minLength: 0)
-                }
+    private var shouldShowMetadataRow: Bool {
+        SettingsLayout.rows(
+            for: model.kind,
+            showsCookies: CookiePickerVisibility.shouldShow(for: model.urls)
+        ).contains(.metadata)
+    }
+
+    private var includeAudioRow: some View {
+        settingsControlRow(label: localized(en: "Audio", zh: "音频", zhHant: "音訊", th: "เสียง")) {
+            Toggle(model.language.includeAudio, isOn: $model.includeVideoAudio)
+                .toggleStyle(.checkbox)
+                .font(AppTypography.font(size: AppTypography.bodySize, weight: .medium))
+                .foregroundStyle(secondary)
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var metadataRow: some View {
+        settingsControlRow(label: localized(en: "Metadata", zh: "元数据", zhHant: "中繼資料", th: "เมทาดาต้า")) {
+            HStack(spacing: AppControlMetrics.settingsCheckboxSpacing) {
+                metadataToggle
+                artworkToggle
+                subtitlesToggle
+                Spacer(minLength: 0)
             }
         }
         .toggleStyle(.checkbox)
@@ -3945,13 +5187,31 @@ struct RedesignedContentView: View {
     }
 
     private var metadataToggle: some View {
-        Toggle(model.language.metadata, isOn: $model.embedMetadata)
+        Toggle(model.language.metadata, isOn: .constant(true))
+            .disabled(true)
+            .opacity(0.45)
     }
 
+    @ViewBuilder
+    private var artworkToggle: some View {
+        if model.kind == .video {
+            Toggle(model.language.artwork, isOn: $model.embedArtwork)
+        } else {
+            Toggle(model.language.artwork, isOn: .constant(false))
+                .disabled(true)
+                .opacity(0.45)
+        }
+    }
+
+    @ViewBuilder
     private var subtitlesToggle: some View {
-        Toggle(model.language.subtitles, isOn: $model.includeSubtitles)
-            .disabled(model.kind == .image)
-            .opacity(model.kind == .image ? 0.45 : 1)
+        if model.kind == .video {
+            Toggle(model.language.subtitles, isOn: $model.includeSubtitles)
+        } else {
+            Toggle(model.language.subtitles, isOn: .constant(false))
+                .disabled(true)
+                .opacity(0.45)
+        }
     }
 
     private func recentDownloadRow(_ item: DownloadHistoryItem) -> some View {
@@ -4015,6 +5275,7 @@ struct RedesignedContentView: View {
                 model.removeDownloadHistoryItem(item)
             }
         }
+        .disabled(model.isRunning)
     }
 
     private func historyIconButton(systemName: String, label: String, action: @escaping () -> Void) -> some View {
@@ -4030,24 +5291,65 @@ struct RedesignedContentView: View {
     }
 
     private var modeControl: some View {
-        Picker("", selection: $model.kind) {
+        HStack(spacing: 0) {
             ForEach(DownloadKind.allCases) { kind in
-                Text(model.language.kindLabel(kind)).tag(kind)
+                modeSegmentButton(kind)
             }
         }
-        .labelsHidden()
-        .pickerStyle(.segmented)
-        .frame(width: 300)
-        .controlSize(.large)
+        .background(Color(nsColor: .controlColor).opacity(0.72), in: Capsule())
+        .clipShape(Capsule())
+        .fixedSize()
+        .animation(AppMotion.fastAnimation(reduceMotion: reduceMotion), value: model.kind)
     }
 
-    private var imageOriginalFormatField: some View {
-        HStack(spacing: 10) {
-            fieldLabel(localized(en: "Format", zh: "格式", zhHant: "格式", th: "รูปแบบ"))
-            Text(localized(en: "Original", zh: "原始", zhHant: "原始", th: "ต้นฉบับ"))
-                .font(AppTypography.font(size: AppTypography.controlSize, weight: .semibold))
-                .foregroundStyle(secondary)
-                .frame(width: 150, alignment: .leading)
+    private func modeSegmentButton(_ kind: DownloadKind) -> some View {
+        let isSelected = model.kind == kind
+
+        return Text(model.language.kindLabel(kind))
+            .font(AppTypography.font(size: AppTypography.controlSize, weight: .semibold))
+            .foregroundStyle(isSelected ? primary : secondary)
+            .frame(width: 62, height: 34)
+            .background {
+                if isSelected {
+                    Capsule()
+                        .fill(accent)
+                }
+            }
+            .overlay(alignment: .trailing) {
+                if kind != DownloadKind.allCases.last && !isSelected {
+                    Rectangle()
+                        .fill(separator)
+                        .frame(width: 1, height: 20)
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                runMotion {
+                    model.kind = kind
+                }
+            }
+            .accessibilityLabel(model.language.kindLabel(kind))
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    @ViewBuilder
+    private var formatQualityControls: some View {
+        if model.kind.usesFormatAndQualityControls {
+            HStack(spacing: AppControlMetrics.settingsInlineControlSpacing) {
+                inlineControlField(title: localized(en: "Format", zh: "格式", zhHant: "格式", th: "รูปแบบ")) {
+                    formatPicker
+                }
+
+                inlineControlField(title: model.language.quality) {
+                    qualityPicker
+                }
+            }
+        } else {
+            inlineStaticField(
+                title: localized(en: "Format", zh: "格式", zhHant: "格式", th: "รูปแบบ"),
+                value: localized(en: "Original", zh: "原始", zhHant: "原始", th: "ต้นฉบับ")
+            )
         }
     }
 
@@ -4057,7 +5359,9 @@ struct RedesignedContentView: View {
             ProgressView()
                 .controlSize(.small)
                 .frame(width: 32)
-        } else if model.canUsePrimaryButton && !model.canDownload {
+                .id("checking")
+                .transition(inputTrailingTransition)
+        } else if model.canUsePrimaryButton && !model.hasCheckedOptions {
             Button(action: model.checkLinks) {
                 Image(systemName: "arrow.right.circle")
                     .font(AppTypography.font(size: 22, weight: .semibold))
@@ -4067,19 +5371,34 @@ struct RedesignedContentView: View {
             .foregroundStyle(accent)
             .contentShape(Rectangle())
             .help(model.language.check)
+            .id("check")
+            .transition(inputTrailingTransition)
         } else if model.canDownload {
             Image(systemName: "checkmark.circle.fill")
                 .font(AppTypography.font(size: 22, weight: .semibold))
                 .foregroundStyle(ready)
                 .frame(width: 32)
+                .id("ready")
+                .transition(inputTrailingTransition)
+        } else if model.hasCheckedOptions && !model.currentSelectionIsFulfillable {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(AppTypography.font(size: 20, weight: .semibold))
+                .foregroundStyle(warning)
+                .frame(width: 32)
+                .id("selection-warning")
+                .transition(inputTrailingTransition)
         } else if model.linkScanState == .unavailable || model.linkScanState == .missingTools {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(AppTypography.font(size: 20, weight: .semibold))
                 .foregroundStyle(warning)
                 .frame(width: 32)
+                .id("warning")
+                .transition(inputTrailingTransition)
         } else {
             Color.clear
                 .frame(width: 32)
+                .id("empty")
+                .transition(inputTrailingTransition)
         }
     }
 
@@ -4090,7 +5409,6 @@ struct RedesignedContentView: View {
                     primaryActionLabel
                 }
                 .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.return, modifiers: [])
             } else {
                 Button(action: {}) {
                     primaryActionLabel
@@ -4107,6 +5425,8 @@ struct RedesignedContentView: View {
         Label(model.primaryButtonTitle, systemImage: model.canDownload ? "arrow.down" : "checkmark")
             .font(AppTypography.font(size: AppTypography.controlSize, weight: .semibold))
             .frame(minWidth: 148)
+            .id(model.primaryButtonTitle)
+            .transition(reduceMotion ? .identity : .opacity)
     }
 
     @ViewBuilder
@@ -4138,17 +5458,23 @@ struct RedesignedContentView: View {
 
     @ViewBuilder
     private var qualityPicker: some View {
-        if model.kind != .image {
-            fixedMenuButton(title: model.language.qualityLabel(model.quality), width: AppControlMetrics.compactMenuWidth) {
-                ForEach(Quality.allCases) { quality in
+        if model.kind == .video {
+            fixedMenuButton(title: model.qualityControlTitle, width: AppControlMetrics.compactMenuWidth) {
+                ForEach(model.availableVideoQualities) { quality in
                     selectableMenuButton(
-                        title: model.language.qualityLabel(quality),
-                        isSelected: model.quality == quality
+                        title: quality.label,
+                        isSelected: model.selectedVideoQuality == quality
                     ) {
-                        model.quality = quality
+                        model.selectVideoQuality(quality)
                     }
                 }
             }
+            .disabled(!model.isQualityControlEnabled)
+        } else if model.kind == .audio {
+            fixedMenuButton(title: "Best", width: AppControlMetrics.compactMenuWidth) {
+                Text("Best")
+            }
+            .disabled(true)
         }
     }
 
@@ -4266,12 +5592,36 @@ struct RedesignedContentView: View {
         .onHover { hoveredTarget = $0 ? .cookiesFile : nil }
     }
 
-    private func controlField<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
+    private func settingsControlRow<Content: View>(
+        label: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        HStack(alignment: .center, spacing: AppControlMetrics.settingsLabelToControlSpacing) {
+            fieldLabel(label)
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func inlineControlField<Content: View>(
+        title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
         HStack(spacing: 10) {
-            fieldLabel(title)
+            inlineFieldLabel(title)
             content()
                 .frame(width: AppControlMetrics.compactMenuWidth)
                 .controlSize(.large)
+        }
+    }
+
+    private func inlineStaticField(title: String, value: String) -> some View {
+        HStack(spacing: 10) {
+            inlineFieldLabel(title)
+            Text(value)
+                .font(AppTypography.font(size: AppTypography.controlSize, weight: .semibold))
+                .foregroundStyle(secondary)
+                .frame(width: AppControlMetrics.compactMenuWidth, alignment: .leading)
         }
     }
 
@@ -4279,7 +5629,13 @@ struct RedesignedContentView: View {
         Text(title)
             .font(AppTypography.font(size: AppTypography.bodySize, weight: .semibold))
             .foregroundStyle(primary)
-            .frame(width: 86, alignment: .leading)
+            .frame(width: AppControlMetrics.settingsFieldLabelWidth, alignment: .leading)
+    }
+
+    private func inlineFieldLabel(_ title: String) -> some View {
+        Text(title)
+            .font(AppTypography.font(size: AppTypography.bodySize, weight: .semibold))
+            .foregroundStyle(secondary)
     }
 
     private func metric(label: String, value: String, color: Color? = nil, icon: String? = nil) -> some View {
@@ -4414,6 +5770,40 @@ struct RedesignedContentView: View {
         )
     }
 
+    private var imagePreviewPagingTransition: AnyTransition {
+        guard !reduceMotion else { return .identity }
+
+        let insertionEdge: Edge = imagePreviewPageDirection >= 0 ? .trailing : .leading
+        let removalEdge: Edge = imagePreviewPageDirection >= 0 ? .leading : .trailing
+        return .asymmetric(
+            insertion: .opacity.combined(with: .move(edge: insertionEdge)),
+            removal: .opacity.combined(with: .move(edge: removalEdge))
+        )
+    }
+
+    private var inputTrailingTransition: AnyTransition {
+        appTransition(.scaleFade)
+    }
+
+    private func appTransition(_ style: AppMotionTransitionStyle) -> AnyTransition {
+        switch style {
+        case .identity:
+            return .identity
+        case .fade:
+            return .opacity
+        case .topReveal:
+            return reduceMotion ? .identity : .opacity.combined(with: .move(edge: .top))
+        case .scaleFade:
+            return reduceMotion ? .identity : .opacity.combined(with: .scale(scale: 0.94))
+        }
+    }
+
+    private func runMotion(_ updates: () -> Void) {
+        withAnimation(AppMotion.stateAnimation(reduceMotion: reduceMotion)) {
+            updates()
+        }
+    }
+
     private var inputAccent: Color {
         switch model.linkScanState {
         case .ready:
@@ -4533,7 +5923,11 @@ struct RedesignedContentView: View {
         case .checking:
             return localized(en: "Downlink is checking the link and estimating the output.", zh: "Downlink 正在检查链接并估算输出。", zhHant: "Downlink 正在檢查連結並預估輸出。", th: "Downlink กำลังตรวจลิงก์และประเมินไฟล์ผลลัพธ์")
         case .unavailable:
-            return localized(en: "This link could not be prepared for download.", zh: "无法准备下载此链接。", zhHant: "無法準備下載此連結。", th: "ไม่สามารถเตรียมลิงก์นี้สำหรับดาวน์โหลดได้")
+            return model.linkCheckFailure?.message(for: model.language)
+                ?? localized(en: "This link could not be prepared for download.", zh: "无法准备下载此链接。", zhHant: "無法準備下載此連結。", th: "ไม่สามารถเตรียมลิงก์นี้สำหรับดาวน์โหลดได้")
+        case .missingTools:
+            return model.linkCheckFailure?.message(for: model.language)
+                ?? localized(en: "A required downloader component is unavailable.", zh: "所需的下载组件不可用。", zhHant: "所需的下載元件無法使用。", th: "ส่วนประกอบดาวน์โหลดที่จำเป็นไม่พร้อมใช้งาน")
         default:
             return localized(en: "Paste a supported link, then check it before downloading.", zh: "粘贴支持的链接，然后先检查再下载。", zhHant: "貼上支援的連結，下載前先檢查。", th: "วางลิงก์ที่รองรับ แล้วตรวจสอบก่อนดาวน์โหลด")
         }

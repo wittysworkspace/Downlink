@@ -16,7 +16,7 @@
   <a href="LICENSE">MIT License</a>
 </p>
 
-Downlink is a lightweight macOS downloader built with SwiftUI. Paste a supported link, choose video, audio, or image mode, then save media with a clean filename. It uses `yt-dlp` for link support, `ffmpeg` for merging, remuxing, and audio conversion, and `gallery-dl` support files for image extraction workflows.
+Downlink is a lightweight macOS downloader built with SwiftUI. Paste a supported link, choose video, audio, or image mode, then save media with a clean filename. It uses `yt-dlp` for link support, `ffmpeg` and `ffprobe` for media post-processing, and `gallery-dl` support files for image extraction workflows.
 
 ## Download
 
@@ -24,20 +24,20 @@ Download the latest DMG from the release page:
 
 [Download Downlink for macOS](https://github.com/wittysworkspace/Downlink/releases/latest)
 
-The packaged release includes standalone `yt-dlp` and `ffmpeg`, plus bundled `gallery-dl` Python support files for image mode.
+The packaged release includes standalone `yt-dlp`, `ffmpeg`, and `ffprobe`, plus bundled `gallery-dl` Python support files for image mode.
 
 ## Features
 
 - Native macOS interface designed for quick everyday use
-- Paste one or more links and automatically check whether they are available
+- Paste one URL at a time, then click Check or press Return to inspect the available formats
 - See an estimated file size before downloading when the source provides one
 - Download video, extract audio, or save image posts
-- Video formats: MP4, MKV, WEBM, MOV
-- Audio formats: MP3, M4A, WAV, FLAC, OPUS, AAC
+- Video formats: MP4, MKV, MOV
+- Audio formats: MP3, M4A, WAV, FLAC, OPUS
 - Image mode saves discovered source images in their original image format when available
-- Quality presets: 4K, 1440p, 1080p, 720p, 480p
-- Clean output names using the original title plus selected mode, like `Original title [1080p].mp4` or `Post title [Image].jpg`
-- Optional subtitles, metadata, and artwork
+- Video qualities are discovered from each checked source; the highest compatible resolution is selected by default, then the highest bitrate available at that resolution
+- Clean output names such as `Original title [1080p].mp4`, `Original title.wav`, or `Post title [Image].jpg`
+- Metadata is always embedded in Video and Audio downloads; Video artwork and subtitles are optional
 - English, Simplified Chinese, Traditional Chinese, and Thai interface languages
 
 ## Requirements
@@ -46,6 +46,8 @@ The packaged release includes standalone `yt-dlp` and `ffmpeg`, plus bundled `ga
 - Apple Silicon Mac for the current packaged build
 
 The source code is public and released under the MIT License.
+
+M4A commonly stores AAC-compressed audio while providing better support for metadata than a raw `.aac` file.
 
 ## Install
 
@@ -71,11 +73,12 @@ Build the distributable app:
 ./scripts/build_app.sh
 ```
 
-The build script copies optional bundled tools from:
+The distributable build requires executable `yt-dlp`, `ffmpeg`, and `ffprobe` files and copies them from `Vendor/bin/`. The `gallery-dl` wrapper and vendored Python packages support Instagram Image mode:
 
 ```text
 Vendor/bin/yt-dlp
 Vendor/bin/ffmpeg
+Vendor/bin/ffprobe
 Vendor/bin/gallery-dl
 Vendor/python/
 ```
@@ -86,7 +89,7 @@ into:
 Downlink.app/Contents/Resources/bin/
 ```
 
-For a portable release, use standalone/static `yt-dlp` and `ffmpeg` binaries, keep the bundled `gallery-dl` Python support files current, and test the packaged app on a clean Mac.
+For a portable release, use standalone/static `yt-dlp`, `ffmpeg`, and `ffprobe` binaries, keep the bundled `gallery-dl` Python support files current, and test the packaged app on a clean Mac.
 
 ## Legal
 

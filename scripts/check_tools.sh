@@ -17,6 +17,13 @@ else
     missing=1
 fi
 
+if command -v ffprobe >/dev/null 2>&1; then
+    echo "ffprobe: $(command -v ffprobe)"
+else
+    echo "ffprobe: missing"
+    missing=1
+fi
+
 if [ "$missing" -ne 0 ]; then
     echo
     echo "Install with: brew install yt-dlp ffmpeg"

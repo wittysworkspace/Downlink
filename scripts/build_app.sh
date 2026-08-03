@@ -9,12 +9,19 @@ VENDOR_BIN_DIR="$ROOT_DIR/Vendor/bin"
 VENDOR_PYTHON_DIR="$ROOT_DIR/Vendor/python"
 ICON_FILE="$ROOT_DIR/Assets/AppIcon.icns"
 THIRD_PARTY_NOTICES="$ROOT_DIR/THIRD_PARTY_NOTICES.md"
-APP_VERSION="2.0.7"
-APP_BUILD="207"
+APP_VERSION="26.0"
+APP_BUILD="2600"
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
 
 cd "$ROOT_DIR"
 swift build -c release
+
+for required_tool in yt-dlp ffmpeg ffprobe; do
+    if [ ! -x "$VENDOR_BIN_DIR/$required_tool" ]; then
+        echo "Missing required executable: $VENDOR_BIN_DIR/$required_tool" >&2
+        exit 1
+    fi
+done
 
 rm -rf "$APP_DIR"
 mkdir -p "$EXECUTABLE_DIR" "$RESOURCES_DIR"

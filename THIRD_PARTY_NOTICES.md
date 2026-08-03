@@ -35,13 +35,13 @@ Some macOS release builds include Python package files under `Contents/Resources
 
 - Project: FFmpeg
 - Website: https://ffmpeg.org
-- Version bundled in the current macOS release: 8.1.1
-- Binary build identifier: `8.1.1-https://www.martin-riedl.de`
+- Versions bundled in the current macOS release: FFmpeg 8.1.1 and FFprobe 8.1.2
+- Binary build identifiers: `8.1.1-https://www.martin-riedl.de` and `8.1.2-https://www.martin-riedl.de`
 - License: GPL-enabled FFmpeg binary
 - Source code: https://ffmpeg.org/download.html
 - Legal information: https://ffmpeg.org/legal.html
 
-The bundled FFmpeg binary reports the following build configuration:
+The bundled FFmpeg and FFprobe binaries report the following build configuration:
 
 ```text
 --prefix=/Volumes/ffmpeg_arm64/out
