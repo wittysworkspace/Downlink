@@ -345,6 +345,11 @@ final class DownloadCommandBuilderTests: XCTestCase {
                 "[VideoConvertor] Converting video from mkv to mp4; Destination: Clip.mp4"
             )
         )
+        XCTAssertTrue(
+            DownloadLogPhase.isConverting(
+                "[DownlinkConvert] Applying MP4 codec policy; Destination: Clip.mp4"
+            )
+        )
         XCTAssertFalse(DownloadLogPhase.isConverting("[download] 100% of 10.00MiB"))
         XCTAssertFalse(DownloadLogPhase.isConverting("[Merger] Merging formats into Clip.mkv"))
     }
@@ -362,6 +367,49 @@ final class DownloadCommandBuilderTests: XCTestCase {
         XCTAssertEqual(model.status, model.language.converting)
         XCTAssertEqual(model.progressFraction, 0.98)
         XCTAssertTrue(model.logText.contains("[VideoConvertor]"))
+    }
+
+    @MainActor
+    func testConversionOutputCanBeDetectedAcrossProcessChunks() {
+        let model = DownloadModel()
+        model.isRunning = true
+
+        model.consumeDownloaderOutput("[DownlinkCon")
+        model.consumeDownloaderOutput("vert] Applying MP4 codec policy\n")
+
+        XCTAssertEqual(model.status, AppLanguage.english.converting)
+    }
+
+    func testDownloadFailureKindClassifiesActionablePostProcessingErrors() {
+        XCTAssertEqual(
+            DownloadFailureKind.detect(in: "VideoToolbox encoder failed to initialise"),
+            .encoder
+        )
+        XCTAssertEqual(
+            DownloadFailureKind.detect(in: "No space left on device"),
+            .storage
+        )
+        XCTAssertEqual(
+            DownloadFailureKind.detect(in: "Could not write header: codec not supported in container"),
+            .output
+        )
+        XCTAssertEqual(DownloadFailureKind.detect(in: "HTTP Error 403"), .generic)
+        XCTAssertEqual(
+            DownloadFailureKind.detect(in: "ERROR: Postprocessing: [DownlinkError:encoder] Conversion failed!"),
+            .encoder
+        )
+        XCTAssertEqual(
+            DownloadFailureKind.detect(in: "ERROR: Postprocessing: [DownlinkError:output] Invalid argument"),
+            .output
+        )
+        XCTAssertEqual(
+            DownloadFailureKind.detect(in: "-c:v:0 hevc_videotoolbox -b:v:0 20000k"),
+            .generic
+        )
+        XCTAssertEqual(
+            DownloadFailureKind.storage.message(in: .thai),
+            "พื้นที่จัดเก็บไม่เพียงพอหรือไม่สามารถเขียนไฟล์ได้ โปรดตรวจสอบโฟลเดอร์ปลายทาง"
+        )
     }
 
     @MainActor
@@ -754,6 +802,9 @@ final class DownloadCommandBuilderTests: XCTestCase {
 
         XCTAssertTrue(DownloadTemporaryDirectory.isManaged(managedPath))
         XCTAssertFalse(DownloadTemporaryDirectory.isManaged(FileManager.default.temporaryDirectory.path))
+        XCTAssertFalse(DownloadTemporaryDirectory.isManaged(
+            FileManager.default.temporaryDirectory.appendingPathComponent("Downlink-unrelated").path
+        ))
 
         DownloadTemporaryDirectory.remove(managedPath)
         XCTAssertFalse(FileManager.default.fileExists(atPath: managedPath))
@@ -962,6 +1013,33 @@ final class DownloadCommandBuilderTests: XCTestCase {
         )
     }
 
+    func testHEV1SelectionForMP4ForcesHVC1RetagWithoutReencoding() throws {
+        let catalog = MediaFormatCatalog.make(metadata: [
+            "formats": [
+                ["format_id": "hevc", "height": 2160, "vcodec": "hev1.1.6.L153", "acodec": "none", "vbr": 12_000],
+                ["format_id": "aac", "vcodec": "none", "acodec": "mp4a.40.2", "abr": 192]
+            ]
+        ])
+
+        let selection = try XCTUnwrap(catalog.videoSelection(
+            height: 2160,
+            includeAudio: true,
+            outputFormat: .mp4
+        ))
+
+        XCTAssertEqual(selection.processingPlan.videoAction, .copyHEVCWithHVC1Tag)
+
+        var configuration = makeVideoConfiguration(format: .mp4)
+        configuration.selectedVideoProcessingPlan = selection.processingPlan
+        let arguments = DownloadCommandBuilder.arguments(
+            for: "https://example.com/video",
+            ffmpegPath: "/Applications/Downlink.app/Contents/Resources/bin/ffmpeg",
+            configuration: configuration
+        )
+        let postprocessorIndex = try XCTUnwrap(arguments.firstIndex(of: "--use-postprocessor"))
+        XCTAssertTrue(arguments[postprocessorIndex + 1].contains("video_action=copy_hevc"))
+    }
+
     func testMediaFormatCatalogUsesVideoOnlySelectorWhenAudioIsDisabled() throws {
         let catalog = MediaFormatCatalog.make(metadata: [
             "formats": [
@@ -976,10 +1054,10 @@ final class DownloadCommandBuilderTests: XCTestCase {
         XCTAssertNil(selection.audioFormatID)
     }
 
-    func testMediaFormatCatalogPrefersVideoOnlyPlusBestAudioOverCombinedStream() throws {
+    func testMediaFormatCatalogChoosesHighestBitrateVideoAndAudioIndependently() throws {
         let catalog = MediaFormatCatalog.make(metadata: [
             "formats": [
-                ["format_id": "combined", "height": 1080, "vcodec": "avc1", "acodec": "aac", "tbr": 5_000],
+                ["format_id": "combined", "height": 1080, "vcodec": "avc1", "acodec": "aac", "tbr": 5_100, "vbr": 5_000, "abr": 100],
                 ["format_id": "video-only", "height": 1080, "vcodec": "vp9", "acodec": "none", "tbr": 4_000],
                 ["format_id": "best-audio", "vcodec": "none", "acodec": "opus", "abr": 192]
             ]
@@ -987,7 +1065,38 @@ final class DownloadCommandBuilderTests: XCTestCase {
 
         let selection = try XCTUnwrap(catalog.videoSelection(height: 1080, includeAudio: true))
 
-        XCTAssertEqual(selection.selector, "video-only+best-audio")
+        XCTAssertEqual(selection.selector, "combined+best-audio")
+        XCTAssertEqual(selection.audioFormatID, "best-audio")
+        XCTAssertEqual(selection.processingPlan.selectedAudioStreamIndex, 1)
+    }
+
+    func testMediaFormatCatalogKeepsHigherBitrateEmbeddedAudio() throws {
+        let catalog = MediaFormatCatalog.make(metadata: [
+            "formats": [
+                ["format_id": "combined", "height": 1080, "vcodec": "avc1", "acodec": "aac", "vbr": 5_000, "abr": 256],
+                ["format_id": "audio-only", "vcodec": "none", "acodec": "opus", "abr": 128]
+            ]
+        ])
+
+        let selection = try XCTUnwrap(catalog.videoSelection(height: 1080, includeAudio: true))
+
+        XCTAssertEqual(selection.selector, "combined")
+        XCTAssertNil(selection.audioFormatID)
+        XCTAssertNil(selection.processingPlan.selectedAudioStreamIndex)
+    }
+
+    func testCombinedTotalBitrateSubtractsAudioBeforeVideoRanking() throws {
+        let catalog = MediaFormatCatalog.make(metadata: [
+            "formats": [
+                ["format_id": "combined", "height": 1080, "vcodec": "avc1", "acodec": "aac", "tbr": 5_000, "abr": 1_500],
+                ["format_id": "video-only", "height": 1080, "vcodec": "vp9", "acodec": "none", "tbr": 4_000],
+                ["format_id": "audio-only", "vcodec": "none", "acodec": "opus", "abr": 192]
+            ]
+        ])
+
+        let selection = try XCTUnwrap(catalog.videoSelection(height: 1080, includeAudio: true))
+
+        XCTAssertEqual(selection.videoFormatID, "video-only")
     }
 
     func testMediaFormatCatalogUsesCombinedStreamWhenNoSeparateAudioExists() throws {
@@ -1032,7 +1141,7 @@ final class DownloadCommandBuilderTests: XCTestCase {
         ))
     }
 
-    func testMediaFormatCatalogRanksVideoByTotalBitrateBeforeVideoBitrate() throws {
+    func testMediaFormatCatalogRanksVideoByVideoBitrateBeforeTotalBitrate() throws {
         let catalog = MediaFormatCatalog.make(metadata: [
             "formats": [
                 ["format_id": "higher-vbr", "height": 720, "vcodec": "avc1", "acodec": "none", "tbr": 2_000, "vbr": 1_900],
@@ -1042,7 +1151,18 @@ final class DownloadCommandBuilderTests: XCTestCase {
 
         let selection = try XCTUnwrap(catalog.videoSelection(height: 720, includeAudio: false))
 
-        XCTAssertEqual(selection.videoFormatID, "higher-total")
+        XCTAssertEqual(selection.videoFormatID, "higher-vbr")
+    }
+
+    func testQualityRefreshPreservesUserSelectionWhenNewOptionsCannotFulfillIt() {
+        let selected = VideoQualityOption(height: 2160)
+        let available = [VideoQualityOption(height: 1080), VideoQualityOption(height: 720)]
+
+        XCTAssertEqual(
+            VideoQualitySelection.afterRefresh(current: selected, available: available),
+            selected
+        )
+        XCTAssertEqual(VideoQualitySelection.initial(available: available), available.first)
     }
 
     func testMediaFormatCatalogExposesCheckedBestAudioID() throws {
@@ -1153,7 +1273,6 @@ final class DownloadCommandBuilderTests: XCTestCase {
             videoAction: .hevc(targetBitrateKbps: 20_000),
             audioAction: .aac(bitRateKbps: 320)
         )
-
         let arguments = DownloadCommandBuilder.arguments(
             for: "https://example.com/video",
             ffmpegPath: "/opt/homebrew/bin/ffmpeg",
@@ -1161,18 +1280,119 @@ final class DownloadCommandBuilderTests: XCTestCase {
         )
 
         let mergeIndex = try XCTUnwrap(arguments.firstIndex(of: "--merge-output-format"))
-        let recodeIndex = try XCTUnwrap(arguments.firstIndex(of: "--recode-video"))
-        let postprocessorIndex = try XCTUnwrap(arguments.firstIndex(of: "--postprocessor-args"))
+        let postprocessorIndex = try XCTUnwrap(arguments.firstIndex(of: "--use-postprocessor"))
         let postprocessorArguments = arguments[postprocessorIndex + 1]
 
         XCTAssertEqual(arguments[mergeIndex + 1], "mkv")
-        XCTAssertEqual(arguments[recodeIndex + 1], "mp4")
-        XCTAssertTrue(postprocessorArguments.contains("-c:v hevc_videotoolbox"))
-        XCTAssertTrue(postprocessorArguments.contains("-b:v 20000k"))
-        XCTAssertTrue(postprocessorArguments.contains("-tag:v hvc1"))
-        XCTAssertTrue(postprocessorArguments.contains("-c:a aac"))
-        XCTAssertTrue(postprocessorArguments.contains("-b:a 320k"))
-        XCTAssertFalse(arguments.contains("--remux-video"), "yt-dlp ignores remux when recode is present and emits a warning")
+        XCTAssertTrue(postprocessorArguments.contains("container=mp4"))
+        XCTAssertTrue(postprocessorArguments.contains("video_action=hevc"))
+        XCTAssertTrue(postprocessorArguments.contains("video_bitrate=20000"))
+        XCTAssertTrue(postprocessorArguments.contains("audio_action=aac"))
+        XCTAssertTrue(postprocessorArguments.contains("audio_bitrate=320"))
+        XCTAssertFalse(arguments.contains("--remux-video"))
+    }
+
+    func testRequiredConversionUsesForcedPluginInsteadOfSkippableRecode() {
+        var configuration = makeVideoConfiguration(format: .mp4)
+        configuration.selectedVideoProcessingPlan = VideoProcessingPlan(
+            container: .mp4,
+            videoAction: .hevc(targetBitrateKbps: 20_000),
+            audioAction: .aac(bitRateKbps: 320)
+        )
+        configuration.videoPluginDirectory = "/Applications/Downlink.app/Contents/Resources/plugins"
+
+        let arguments = DownloadCommandBuilder.arguments(
+            for: "https://example.com/combined.mp4",
+            ffmpegPath: "/Applications/Downlink.app/Contents/Resources/bin/ffmpeg",
+            configuration: configuration
+        )
+
+        XCTAssertTrue(arguments.contains("--plugin-dirs"))
+        XCTAssertTrue(arguments.contains("/Applications/Downlink.app/Contents/Resources/plugins"))
+        XCTAssertTrue(arguments.contains("--use-postprocessor"))
+        XCTAssertFalse(arguments.contains("--recode-video"))
+        XCTAssertFalse(arguments.contains("--postprocessor-args"))
+    }
+
+    func testIndependentCombinedVideoAndAudioSelectionKeepsOnlyChosenAudio() throws {
+        var configuration = makeVideoConfiguration(format: .mp4)
+        configuration.selectedVideoFormatSelector = "combined+best-audio"
+        configuration.selectedVideoProcessingPlan = VideoProcessingPlan(
+            container: .mp4,
+            videoAction: .copy,
+            audioAction: .copy,
+            selectedAudioStreamIndex: 1
+        )
+
+        let arguments = DownloadCommandBuilder.arguments(
+            for: "https://example.com/video",
+            ffmpegPath: "/Applications/Downlink.app/Contents/Resources/bin/ffmpeg",
+            configuration: configuration
+        )
+        let postprocessorIndex = try XCTUnwrap(arguments.firstIndex(of: "--use-postprocessor"))
+
+        XCTAssertTrue(arguments.contains("--audio-multistreams"))
+        XCTAssertTrue(arguments[postprocessorIndex + 1].contains("audio_stream_index=1"))
+    }
+
+    func testPluginDirectoryResolvesFromDevelopmentWorkspaceIndependentlyOfFFmpeg() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DownlinkPluginResolver-\(UUID().uuidString)", isDirectory: true)
+        let plugin = root.appendingPathComponent(
+            "Vendor/plugins/downlink/yt_dlp_plugins/postprocessor/downlink_convert.py"
+        )
+        try FileManager.default.createDirectory(
+            at: plugin.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try "# test plugin".write(to: plugin, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        XCTAssertEqual(
+            DownlinkPluginDirectory.resolve(
+                bundleResourceURL: nil,
+                currentDirectoryURL: root,
+                ffmpegPath: "/opt/homebrew/bin/ffmpeg"
+            ),
+            root.appendingPathComponent("Vendor/plugins").path
+        )
+    }
+
+    func testSelectionUnavailableMessageExplainsHowToRecover() {
+        XCTAssertEqual(
+            AppLanguage.english.selectionUnavailable(quality: "2160p", includeAudio: false),
+            "2160p is unavailable without audio. Choose another quality or turn on Include audio."
+        )
+        XCTAssertTrue(
+            AppLanguage.thai.selectionUnavailable(quality: "2160p", includeAudio: false)
+                .contains("2160p")
+        )
+    }
+
+    func testCancellingControllerTerminatesDescendantProcess() throws {
+        let controller = CheckProcessController()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", "sleep 30 & wait"]
+
+        XCTAssertTrue(try controller.start(process))
+        let deadline = Date().addingTimeInterval(2)
+        var descendants: [pid_t] = []
+        repeat {
+            descendants = ProcessTree.descendantProcessIDs(of: process.processIdentifier)
+            if !descendants.isEmpty { break }
+            Thread.sleep(forTimeInterval: 0.02)
+        } while Date() < deadline
+        let childPID = try XCTUnwrap(descendants.first)
+
+        controller.stop(.cancelled)
+        process.waitUntilExit()
+        let stoppedDeadline = Date().addingTimeInterval(2)
+        while ProcessTree.isProcessAlive(childPID), Date() < stoppedDeadline {
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+
+        XCTAssertFalse(ProcessTree.isProcessAlive(childPID))
     }
 
     func testVP94KMOVUsesTheSameHEVCAndAACPolicyAsMP4() throws {
@@ -1191,12 +1411,11 @@ final class DownloadCommandBuilderTests: XCTestCase {
         )
 
         let mergeIndex = try XCTUnwrap(arguments.firstIndex(of: "--merge-output-format"))
-        let recodeIndex = try XCTUnwrap(arguments.firstIndex(of: "--recode-video"))
-        let postprocessorIndex = try XCTUnwrap(arguments.firstIndex(of: "--postprocessor-args"))
+        let postprocessorIndex = try XCTUnwrap(arguments.firstIndex(of: "--use-postprocessor"))
         XCTAssertEqual(arguments[mergeIndex + 1], "mkv")
-        XCTAssertEqual(arguments[recodeIndex + 1], "mov")
-        XCTAssertTrue(arguments[postprocessorIndex + 1].contains("-c:v hevc_videotoolbox"))
-        XCTAssertTrue(arguments[postprocessorIndex + 1].contains("-c:a aac"))
+        XCTAssertTrue(arguments[postprocessorIndex + 1].contains("container=mov"))
+        XCTAssertTrue(arguments[postprocessorIndex + 1].contains("video_action=hevc"))
+        XCTAssertTrue(arguments[postprocessorIndex + 1].contains("audio_action=aac"))
     }
 
     func testCompatibleH264AndAACUseDirectRemuxWithoutReencoding() {
@@ -1233,11 +1452,11 @@ final class DownloadCommandBuilderTests: XCTestCase {
             configuration: configuration
         )
 
-        let postprocessorIndex = try XCTUnwrap(arguments.firstIndex(of: "--postprocessor-args"))
+        let postprocessorIndex = try XCTUnwrap(arguments.firstIndex(of: "--use-postprocessor"))
         let postprocessorArguments = arguments[postprocessorIndex + 1]
-        XCTAssertTrue(postprocessorArguments.contains("-c:v copy"))
-        XCTAssertTrue(postprocessorArguments.contains("-c:a aac"))
-        XCTAssertTrue(postprocessorArguments.contains("-b:a 320k"))
+        XCTAssertTrue(postprocessorArguments.contains("video_action=copy"))
+        XCTAssertTrue(postprocessorArguments.contains("audio_action=aac"))
+        XCTAssertTrue(postprocessorArguments.contains("audio_bitrate=320"))
     }
 
     func testMKVPreservesSourceVideoAndConvertsAudioToFLAC() throws {
@@ -1255,12 +1474,11 @@ final class DownloadCommandBuilderTests: XCTestCase {
         )
 
         let mergeIndex = try XCTUnwrap(arguments.firstIndex(of: "--merge-output-format"))
-        let recodeIndex = try XCTUnwrap(arguments.firstIndex(of: "--recode-video"))
-        let postprocessorIndex = try XCTUnwrap(arguments.firstIndex(of: "--postprocessor-args"))
-        XCTAssertEqual(arguments[mergeIndex + 1], "mp4")
-        XCTAssertEqual(arguments[recodeIndex + 1], "mkv")
-        XCTAssertTrue(arguments[postprocessorIndex + 1].contains("-c:v copy"))
-        XCTAssertTrue(arguments[postprocessorIndex + 1].contains("-c:a flac"))
+        let postprocessorIndex = try XCTUnwrap(arguments.firstIndex(of: "--use-postprocessor"))
+        XCTAssertEqual(arguments[mergeIndex + 1], "mkv")
+        XCTAssertTrue(arguments[postprocessorIndex + 1].contains("container=mkv"))
+        XCTAssertTrue(arguments[postprocessorIndex + 1].contains("video_action=copy"))
+        XCTAssertTrue(arguments[postprocessorIndex + 1].contains("audio_action=flac"))
     }
 
     func testVideoOnlyConversionDropsAudioExplicitly() throws {
@@ -1277,10 +1495,9 @@ final class DownloadCommandBuilderTests: XCTestCase {
             configuration: configuration
         )
 
-        let postprocessorIndex = try XCTUnwrap(arguments.firstIndex(of: "--postprocessor-args"))
+        let postprocessorIndex = try XCTUnwrap(arguments.firstIndex(of: "--use-postprocessor"))
         let postprocessorArguments = arguments[postprocessorIndex + 1]
-        XCTAssertTrue(postprocessorArguments.contains("-an"))
-        XCTAssertFalse(postprocessorArguments.contains("-c:a"))
+        XCTAssertTrue(postprocessorArguments.contains("audio_action=none"))
     }
 
     private func makeVideoConfiguration(
@@ -1383,6 +1600,13 @@ final class DownloadCommandBuilderTests: XCTestCase {
 
         XCTAssertTrue(script.contains("APP_VERSION=\"26.0\""))
         XCTAssertTrue(script.contains("APP_BUILD=\"2600\""))
+        XCTAssertTrue(script.contains("Vendor/plugins"))
+        XCTAssertTrue(script.contains("$RESOURCES_DIR/plugins"))
+        XCTAssertTrue(script.contains("cp -L"))
+        XCTAssertTrue(script.contains("downlink_convert.py"))
+        XCTAssertTrue(script.contains("__pycache__"))
+        XCTAssertTrue(script.contains("*.pyc"))
+        XCTAssertTrue(script.contains("Packaged tool is missing"))
     }
 
     func testVideoArtworkOptionEmbedsThumbnail() {

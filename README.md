@@ -35,14 +35,14 @@ The packaged release includes standalone `yt-dlp`, `ffmpeg`, and `ffprobe`, plus
 - Video formats: MP4, MOV, MKV
 - Audio formats: MP3, M4A, WAV, FLAC, OPUS
 - Image mode saves discovered source images in their original image format when available
-- Video qualities are discovered from each checked source; the highest available resolution is selected by default, then the highest-bitrate streams available at that resolution
+- Video qualities are discovered from each checked source; the highest available resolution is selected by default, then video and audio are each chosen by their highest available bitrate at that resolution
 - Clean output names such as `Original title [1080p].mp4`, `Original title.wav`, or `Post title [Image].jpg`
 - Metadata is always embedded in Video and Audio downloads; Video artwork and subtitles are optional where the selected container supports them
 - English, Simplified Chinese, Traditional Chinese, and Thai interface languages
 
 ### Video container behavior
 
-- **MP4 and MOV** use H.264 or HEVC video with AAC audio for compatibility with QuickTime Player, Adobe Premiere Pro, and DaVinci Resolve. If the best source at the selected resolution is VP9 or AV1, Downlink converts it to HEVC without lowering the selected resolution. Genuine MOV does not reliably retain attached artwork, so its artwork option is disabled.
+- **MP4 and MOV** use H.264 or HEVC video with AAC audio for compatibility with QuickTime Player, Adobe Premiere Pro, and DaVinci Resolve. If the best source at the selected resolution is VP9 or AV1, Downlink converts it to HEVC without lowering the selected resolution. Existing HEVC is stream-copied and retagged to `hvc1` when needed. Genuine MOV does not reliably retain attached artwork, so its artwork option is disabled.
 - **MKV** keeps the selected source video stream without re-encoding and converts its audio to lossless FLAC when needed. This preserves the source video for DaVinci Resolve, but QuickTime Player and Adobe Premiere Pro compatibility is not guaranteed.
 
 ## Requirements
@@ -86,6 +86,7 @@ Vendor/bin/ffmpeg
 Vendor/bin/ffprobe
 Vendor/bin/gallery-dl
 Vendor/python/
+Vendor/plugins/downlink/yt_dlp_plugins/postprocessor/downlink_convert.py
 ```
 
 into:
@@ -95,6 +96,14 @@ Downlink.app/Contents/Resources/bin/
 ```
 
 For a portable release, use standalone/static `yt-dlp`, `ffmpeg`, and `ffprobe` binaries, keep the bundled `gallery-dl` Python support files current, and test the packaged app on a clean Mac.
+
+Run the offline media pipeline QA before a release:
+
+```sh
+./scripts/test_container_pipeline.sh
+```
+
+Set `DOWNLINK_RESOURCE_DIR` to an app's `Contents/Resources` directory to test the packaged tools and plugin instead of `Vendor/`.
 
 ## Legal
 

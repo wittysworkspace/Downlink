@@ -27,12 +27,14 @@ Users choose resolution and container, not codec. Downlink selects the codec wor
 
 For the selected resolution, MP4 and MOV choose the same highest-bitrate usable source video and the same highest-bitrate available audio source. They then produce one of these codec combinations:
 
-1. **H.264/HEVC + AAC** when the selected source video is already compatible. Video is copied without re-encoding.
+1. **H.264/HEVC + AAC** when the selected source video is already compatible. Video is copied without re-encoding. HEVC tagged `hev1` is remuxed and retagged as `hvc1` without re-encoding for Apple compatibility.
 2. **HEVC + AAC** when the selected source video is VP9 or AV1. Video is transcoded at the same dimensions and frame rate using bundled FFmpeg. VideoToolbox is configured to prioritize quality, enable spatial adaptive quantization when available, allow Apple's software encoder path, and use a target bitrate equal to the greater of 1.5 times the reported source video bitrate or the resolution floor: 20 Mbps at 2160p and above, 12 Mbps at 1440p, 8 Mbps at 1080p, and 5 Mbps below 1080p. If VideoToolbox cannot encode the selected source, the app reports the conversion failure rather than silently changing quality.
 
 AAC source audio is copied when the target container accepts it safely. Opus or another incompatible stereo audio codec is converted to AAC-LC at 320 kbps while preserving its sample rate and channel layout. HEVC uses the `hvc1` tag in both containers for Apple compatibility.
 
 The output retains the selected dimensions, aspect ratio, frame rate, color description, metadata, and requested subtitles. MP4 supports optional embedded artwork. Genuine QuickTime MOV does not reliably retain the attached-picture artwork written by yt-dlp/FFmpeg, so the artwork checkbox is visibly disabled for MOV rather than claiming success. MP4 and MOV may differ slightly in file size because of container overhead, but their source selection, encoded video quality, audio quality, and visible result must otherwise be equivalent.
+
+Video and audio are ranked independently. If the highest-bitrate video is a combined format, Downlink also requests the highest-bitrate audio-only format, keeps that selected audio track, and removes the lower-quality embedded audio from the final output.
 
 Direct tests with the bundled FFmpeg confirm that genuine MOV files can contain both supported output combinations: H.264/AAC and HEVC/AAC.
 
@@ -78,6 +80,8 @@ The checked media catalog keeps codec and bitrate information for every source s
 - `copySourceVideoToMKV` for MKV, with lossless FLAC audio output.
 
 Command construction consumes this policy rather than inferring compatibility again. Quality discovery, source selection, container selection, and post-processing remain independently testable.
+
+Required conversion and retagging use the bundled `DownlinkConvert` yt-dlp postprocessor. It writes through a temporary output even when the source and target extension are identical, preventing a required same-extension conversion from being incorrectly skipped.
 
 Each job uses a unique app-managed directory under the macOS temporary directory for downloads, merging, and conversion intermediates. yt-dlp moves only a successfully completed result into the user's destination, and the app removes its managed temporary directory after success, failure, or cancellation.
 

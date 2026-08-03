@@ -350,6 +350,15 @@ enum AppLanguage: String, CaseIterable, Identifiable {
         }
     }
 
+    var missingConverter: String {
+        switch self {
+        case .english: return "The required video converter plugin is missing. Reinstall Downlink."
+        case .simplifiedChinese: return "缺少所需的视频转换插件，请重新安装 Downlink。"
+        case .traditionalChinese: return "缺少所需的影片轉換外掛程式，請重新安裝 Downlink。"
+        case .thai: return "ไม่พบปลั๊กอินแปลงวิดีโอที่จำเป็น โปรดติดตั้ง Downlink ใหม่"
+        }
+    }
+
     var error: String {
         switch self {
         case .english: return "Error"
@@ -365,6 +374,24 @@ enum AppLanguage: String, CaseIterable, Identifiable {
         case .simplifiedChinese: return "下载失败，请检查链接后重试。"
         case .traditionalChinese: return "下載失敗，請檢查連結後再試一次。"
         case .thai: return "ดาวน์โหลดไม่สำเร็จ โปรดตรวจสอบลิงก์แล้วลองอีกครั้ง"
+        }
+    }
+
+    func selectionUnavailable(quality: String, includeAudio: Bool) -> String {
+        if !includeAudio {
+            switch self {
+            case .english: return "\(quality) is unavailable without audio. Choose another quality or turn on Include audio."
+            case .simplifiedChinese: return "无音频时无法使用 \(quality)，请选择其他画质或开启“包含音频”。"
+            case .traditionalChinese: return "無音訊時無法使用 \(quality)，請選擇其他畫質或開啟「包含音訊」。"
+            case .thai: return "ไม่สามารถใช้ \(quality) เมื่อปิดเสียงได้ โปรดเลือกความละเอียดอื่นหรือเปิด Include audio"
+            }
+        }
+
+        switch self {
+        case .english: return "\(quality) is unavailable with the current settings. Choose another quality or adjust the format settings."
+        case .simplifiedChinese: return "当前设置无法使用 \(quality)，请选择其他画质或调整格式设置。"
+        case .traditionalChinese: return "目前設定無法使用 \(quality)，請選擇其他畫質或調整格式設定。"
+        case .thai: return "ไม่สามารถใช้ \(quality) กับการตั้งค่าปัจจุบันได้ โปรดเลือกความละเอียดอื่นหรือปรับรูปแบบ"
         }
     }
 
@@ -846,6 +873,19 @@ struct VideoQualityOption: Equatable, Identifiable, Sendable {
     }
 }
 
+enum VideoQualitySelection {
+    static func initial(available: [VideoQualityOption]) -> VideoQualityOption {
+        available.first ?? .best
+    }
+
+    static func afterRefresh(
+        current: VideoQualityOption,
+        available: [VideoQualityOption]
+    ) -> VideoQualityOption {
+        current
+    }
+}
+
 struct VideoStreamSelection: Equatable, Sendable {
     let height: Int?
     let videoFormatID: String
@@ -858,6 +898,7 @@ struct VideoStreamSelection: Equatable, Sendable {
 struct VideoProcessingPlan: Equatable, Sendable {
     enum VideoAction: Equatable, Sendable {
         case copy
+        case copyHEVCWithHVC1Tag
         case hevc(targetBitrateKbps: Int)
     }
 
@@ -871,6 +912,14 @@ struct VideoProcessingPlan: Equatable, Sendable {
     let container: VideoFormat
     let videoAction: VideoAction
     let audioAction: AudioAction
+    var selectedAudioStreamIndex: Int? = nil
+
+    var requiresPlugin: Bool {
+        switch (videoAction, audioAction, selectedAudioStreamIndex) {
+        case (.copy, .copy, nil), (.copy, .none, nil): return false
+        default: return true
+        }
+    }
 }
 
 struct AudioStreamSelection: Equatable, Sendable {
@@ -915,6 +964,22 @@ struct MediaFormatCatalog: Equatable, Sendable {
             let hasAudio = audioCodec.map { $0 != "none" } ?? false
             guard hasVideo || hasAudio else { return nil }
 
+            let totalBitrate = doubleValue(format["tbr"])
+            let reportedVideoBitrate = doubleValue(format["vbr"])
+            let reportedAudioBitrate = doubleValue(format["abr"])
+            let videoBitrate: Double
+            if let reportedVideoBitrate {
+                videoBitrate = reportedVideoBitrate
+            } else if hasVideo, hasAudio,
+                      let totalBitrate,
+                      let reportedAudioBitrate {
+                videoBitrate = max(totalBitrate - reportedAudioBitrate, 0)
+            } else if hasVideo, hasAudio {
+                videoBitrate = 0
+            } else {
+                videoBitrate = totalBitrate ?? 0
+            }
+
             return MediaFormat(
                 id: id,
                 height: intValue(format["height"]),
@@ -922,8 +987,8 @@ struct MediaFormatCatalog: Equatable, Sendable {
                 hasAudio: hasAudio,
                 videoCodec: videoCodec?.lowercased() ?? "none",
                 audioCodec: audioCodec?.lowercased() ?? "none",
-                videoBitrate: doubleValue(format["tbr"]) ?? doubleValue(format["vbr"]) ?? 0,
-                audioBitrate: doubleValue(format["abr"]) ?? (hasAudio && !hasVideo ? doubleValue(format["tbr"]) : nil) ?? 0,
+                videoBitrate: videoBitrate,
+                audioBitrate: reportedAudioBitrate ?? (hasAudio && !hasVideo ? totalBitrate : nil) ?? 0,
                 bytes: int64Value(format["filesize"]) ?? int64Value(format["filesize_approx"]),
                 preference: doubleValue(format["preference"]) ?? 0
             )
@@ -960,23 +1025,23 @@ struct MediaFormatCatalog: Equatable, Sendable {
             format.hasVideo
                 && (height == nil || format.height == height)
         }
-        let videoOnlyCandidates = allVideoCandidates.filter { !$0.hasAudio }
-        let combinedCandidates = allVideoCandidates.filter(\.hasAudio)
         let audio = bestAudioOnlyFormat
-        let videoCandidates: [MediaFormat]
         if includeAudio {
-            if audio != nil, !videoOnlyCandidates.isEmpty {
-                videoCandidates = videoOnlyCandidates
-            } else if !combinedCandidates.isEmpty {
-                videoCandidates = combinedCandidates
-            } else {
+            if audio == nil, !allVideoCandidates.contains(where: \.hasAudio) {
                 return nil
             }
         } else {
-            guard !videoOnlyCandidates.isEmpty else { return nil }
-            videoCandidates = videoOnlyCandidates
+            guard allVideoCandidates.contains(where: { !$0.hasAudio }) else { return nil }
         }
-        guard let video = videoCandidates.max(by: { left, right in
+        let selectableVideoCandidates: [MediaFormat]
+        if includeAudio, audio == nil {
+            selectableVideoCandidates = allVideoCandidates.filter(\.hasAudio)
+        } else if includeAudio {
+            selectableVideoCandidates = allVideoCandidates
+        } else {
+            selectableVideoCandidates = allVideoCandidates.filter { !$0.hasAudio }
+        }
+        guard let video = selectableVideoCandidates.max(by: { left, right in
             if left.videoBitrate == right.videoBitrate {
                 if (left.bytes ?? 0) == (right.bytes ?? 0) {
                     if left.preference == right.preference {
@@ -991,16 +1056,27 @@ struct MediaFormatCatalog: Equatable, Sendable {
             return nil
         }
 
-        let selectedAudio = includeAudio && !video.hasAudio ? audio : nil
-        let sourceAudioCodec = video.hasAudio ? video.audioCodec : selectedAudio?.audioCodec
+        let selectedAudio: MediaFormat?
+        if includeAudio,
+           video.hasAudio,
+           let audio,
+           video.audioBitrate >= audio.audioBitrate {
+            selectedAudio = nil
+        } else {
+            selectedAudio = includeAudio ? audio : nil
+        }
+        let usesEmbeddedAudio = includeAudio && selectedAudio == nil && video.hasAudio
+        let sourceAudioCodec = selectedAudio?.audioCodec ?? (usesEmbeddedAudio ? video.audioCodec : nil)
+        let selectedAudioStreamIndex = video.hasAudio && selectedAudio != nil ? 1 : nil
         let processingPlan = processingPlan(
             outputFormat: outputFormat,
             video: video,
             sourceAudioCodec: sourceAudioCodec,
-            includeAudio: includeAudio
+            includeAudio: includeAudio,
+            selectedAudioStreamIndex: selectedAudioStreamIndex
         )
 
-        guard includeAudio, !video.hasAudio else {
+        guard includeAudio, selectedAudio != nil else {
             return VideoStreamSelection(
                 height: video.height ?? height,
                 videoFormatID: video.id,
@@ -1014,8 +1090,6 @@ struct MediaFormatCatalog: Equatable, Sendable {
         let estimatedBytes: Int64?
         if let videoBytes = video.bytes, let audioBytes = selectedAudio?.bytes {
             estimatedBytes = videoBytes + audioBytes
-        } else if selectedAudio == nil {
-            estimatedBytes = video.bytes
         } else {
             estimatedBytes = nil
         }
@@ -1024,7 +1098,7 @@ struct MediaFormatCatalog: Equatable, Sendable {
             height: video.height ?? height,
             videoFormatID: video.id,
             audioFormatID: selectedAudio?.id,
-            selector: selectedAudio.map { "\(video.id)+\($0.id)" } ?? video.id,
+            selector: "\(video.id)+\(selectedAudio!.id)",
             estimatedBytes: estimatedBytes,
             processingPlan: processingPlan
         )
@@ -1083,15 +1157,18 @@ struct MediaFormatCatalog: Equatable, Sendable {
         outputFormat: VideoFormat,
         video: MediaFormat,
         sourceAudioCodec: String?,
-        includeAudio: Bool
+        includeAudio: Bool,
+        selectedAudioStreamIndex: Int?
     ) -> VideoProcessingPlan {
         let videoAction: VideoProcessingPlan.VideoAction
         switch outputFormat {
         case .mkv:
             videoAction = .copy
         case .mp4, .mov:
-            if codec(video.videoCodec, hasAnyPrefix: ["avc1", "h264", "hev1", "hvc1", "hevc"]) {
+            if codec(video.videoCodec, hasAnyPrefix: ["avc1", "h264", "hvc1"]) {
                 videoAction = .copy
+            } else if codec(video.videoCodec, hasAnyPrefix: ["hev1", "hevc"]) {
+                videoAction = .copyHEVCWithHVC1Tag
             } else {
                 let height = video.height ?? 0
                 let resolutionFloor: Int
@@ -1115,7 +1192,8 @@ struct MediaFormatCatalog: Equatable, Sendable {
             return VideoProcessingPlan(
                 container: outputFormat,
                 videoAction: videoAction,
-                audioAction: audioAction
+                audioAction: audioAction,
+                selectedAudioStreamIndex: selectedAudioStreamIndex
             )
         }
 
@@ -1139,7 +1217,8 @@ struct MediaFormatCatalog: Equatable, Sendable {
         return VideoProcessingPlan(
             container: outputFormat,
             videoAction: videoAction,
-            audioAction: audioAction
+            audioAction: audioAction,
+            selectedAudioStreamIndex: selectedAudioStreamIndex
         )
     }
 
@@ -1607,6 +1686,39 @@ struct DownloadConfiguration: Sendable, Equatable {
     var selectedVideoProcessingPlan: VideoProcessingPlan? = nil
     var selectedAudioFormatSelector: String? = nil
     var temporaryDirectory: String? = nil
+    var videoPluginDirectory: String? = nil
+}
+
+enum DownlinkPluginDirectory {
+    static let relativePluginPath = "downlink/yt_dlp_plugins/postprocessor/downlink_convert.py"
+
+    static func resolve(
+        bundleResourceURL: URL? = Bundle.main.resourceURL,
+        currentDirectoryURL: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true),
+        ffmpegPath: String
+    ) -> String? {
+        var candidates: [URL] = []
+        if let bundleResourceURL {
+            candidates.append(bundleResourceURL.appendingPathComponent("plugins", isDirectory: true))
+        }
+        candidates.append(
+            URL(fileURLWithPath: ffmpegPath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("plugins", isDirectory: true)
+        )
+        candidates.append(
+            currentDirectoryURL
+                .appendingPathComponent("Vendor", isDirectory: true)
+                .appendingPathComponent("plugins", isDirectory: true)
+        )
+
+        return candidates.first(where: { candidate in
+            FileManager.default.fileExists(
+                atPath: candidate.appendingPathComponent(relativePluginPath).path
+            )
+        })?.path
+    }
 }
 
 enum DownloadCommandBuilder {
@@ -1648,7 +1760,11 @@ enum DownloadCommandBuilder {
             let selector = configuration.selectedVideoFormatSelector
                 ?? (configuration.includeVideoAudio ? configuration.quality.formatSelector : configuration.quality.videoOnlyFormatSelector)
             args.append(contentsOf: ["--format", selector])
-            appendVideoProcessingArguments(to: &args, configuration: configuration)
+            appendVideoProcessingArguments(
+                to: &args,
+                ffmpegPath: ffmpegPath,
+                configuration: configuration
+            )
         case .audio:
             appendFasterSingleItemDownloadArguments(to: &args)
             args.append("--embed-metadata")
@@ -1677,6 +1793,7 @@ enum DownloadCommandBuilder {
 
     private static func appendVideoProcessingArguments(
         to args: inout [String],
+        ffmpegPath: String,
         configuration: DownloadConfiguration
     ) {
         guard let finalFormat = configuration.videoFormat.argumentValue else { return }
@@ -1688,15 +1805,7 @@ enum DownloadCommandBuilder {
             return
         }
 
-        let requiresConversion: Bool
-        switch (plan.videoAction, plan.audioAction) {
-        case (.copy, .copy), (.copy, .none):
-            requiresConversion = false
-        default:
-            requiresConversion = true
-        }
-
-        guard requiresConversion else {
+        guard plan.requiresPlugin else {
             args.append(contentsOf: [
                 "--merge-output-format", finalFormat,
                 "--remux-video", finalFormat
@@ -1704,47 +1813,53 @@ enum DownloadCommandBuilder {
             return
         }
 
-        let intermediateFormat = plan.container == .mkv ? "mp4" : "mkv"
+        guard let pluginDirectory = configuration.videoPluginDirectory
+            ?? DownlinkPluginDirectory.resolve(ffmpegPath: ffmpegPath) else {
+            return
+        }
+        if plan.selectedAudioStreamIndex != nil {
+            args.append("--audio-multistreams")
+        }
         args.append(contentsOf: [
-            "--merge-output-format", intermediateFormat,
-            "--recode-video", finalFormat,
-            "--postprocessor-args", "VideoConvertor+ffmpeg_o:\(ffmpegVideoConversionArguments(for: plan))"
+            "--merge-output-format", "mkv",
+            "--plugin-dirs", pluginDirectory,
+            "--use-postprocessor", downlinkPostprocessorConfiguration(for: plan)
         ])
     }
 
-    private static func ffmpegVideoConversionArguments(for plan: VideoProcessingPlan) -> String {
-        var arguments: [String] = []
+    private static func downlinkPostprocessorConfiguration(for plan: VideoProcessingPlan) -> String {
+        var settings = [
+            "when=post_process",
+            "container=\(plan.container.rawValue)"
+        ]
 
         switch plan.videoAction {
         case .copy:
-            arguments.append(contentsOf: ["-c:v", "copy"])
+            settings.append("video_action=copy")
+        case .copyHEVCWithHVC1Tag:
+            settings.append("video_action=copy_hevc")
         case .hevc(let targetBitrateKbps):
-            let maximumBitrateKbps = Int((Double(targetBitrateKbps) * 1.4).rounded(.up))
-            let bufferSizeKbps = targetBitrateKbps * 2
-            arguments.append(contentsOf: [
-                "-c:v", "hevc_videotoolbox",
-                "-allow_sw", "1",
-                "-prio_speed", "0",
-                "-spatial_aq", "1",
-                "-b:v", "\(targetBitrateKbps)k",
-                "-maxrate", "\(maximumBitrateKbps)k",
-                "-bufsize", "\(bufferSizeKbps)k",
-                "-tag:v", "hvc1"
-            ])
+            settings.append("video_action=hevc")
+            settings.append("video_bitrate=\(targetBitrateKbps)")
         }
 
         switch plan.audioAction {
         case .none:
-            arguments.append("-an")
+            settings.append("audio_action=none")
         case .copy:
-            arguments.append(contentsOf: ["-c:a", "copy"])
+            settings.append("audio_action=copy")
         case .aac(let bitRateKbps):
-            arguments.append(contentsOf: ["-c:a", "aac", "-b:a", "\(bitRateKbps)k"])
+            settings.append("audio_action=aac")
+            settings.append("audio_bitrate=\(bitRateKbps)")
         case .flac:
-            arguments.append(contentsOf: ["-c:a", "flac"])
+            settings.append("audio_action=flac")
         }
 
-        return arguments.joined(separator: " ")
+        if let selectedAudioStreamIndex = plan.selectedAudioStreamIndex {
+            settings.append("audio_stream_index=\(selectedAudioStreamIndex)")
+        }
+
+        return "DownlinkConvert:\(settings.joined(separator: ";"))"
     }
 
     static func scanArguments(for url: String, configuration: DownloadConfiguration) -> [String] {
@@ -2094,6 +2209,9 @@ final class CheckProcessController: @unchecked Sendable {
         defer { lock.unlock() }
         guard stopReason == nil, !isComplete else { return false }
         self.process = process
+        var environment = process.environment ?? ProcessInfo.processInfo.environment
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        process.environment = environment
         try process.run()
         return true
     }
@@ -2109,7 +2227,7 @@ final class CheckProcessController: @unchecked Sendable {
         lock.unlock()
 
         if activeProcess?.isRunning == true {
-            activeProcess?.terminate()
+            ProcessTree.terminate(activeProcess!)
         }
     }
 
@@ -2119,6 +2237,42 @@ final class CheckProcessController: @unchecked Sendable {
         isComplete = true
         process = nil
         return stopReason
+    }
+}
+
+enum ProcessTree {
+    static func descendantProcessIDs(of parentPID: pid_t) -> [pid_t] {
+        var directChildren: [pid_t] = []
+        var capacity = 16
+
+        while true {
+            var buffer = [pid_t](repeating: 0, count: capacity)
+            let count = proc_listchildpids(
+                parentPID,
+                &buffer,
+                Int32(buffer.count * MemoryLayout<pid_t>.size)
+            )
+            guard count > 0 else { break }
+            directChildren = Array(buffer.prefix(Int(count)))
+            if count < capacity { break }
+            capacity *= 2
+        }
+
+        return directChildren + directChildren.flatMap(descendantProcessIDs(of:))
+    }
+
+    static func isProcessAlive(_ pid: pid_t) -> Bool {
+        guard pid > 0 else { return false }
+        if kill(pid, 0) == 0 { return true }
+        return errno == EPERM
+    }
+
+    static func terminate(_ process: Process) {
+        let descendants = descendantProcessIDs(of: process.processIdentifier)
+        for pid in descendants.reversed() where pid > 0 {
+            _ = kill(pid, SIGTERM)
+        }
+        process.terminate()
     }
 }
 
@@ -2416,8 +2570,11 @@ enum DownloadTemporaryDirectory {
 
     static func isManaged(_ path: String) -> Bool {
         let url = URL(fileURLWithPath: path).standardizedFileURL
-        return url.deletingLastPathComponent() == rootURL
-            && url.lastPathComponent.hasPrefix("Downlink-")
+        guard url.deletingLastPathComponent() == rootURL else { return false }
+        let prefix = "Downlink-"
+        guard url.lastPathComponent.hasPrefix(prefix) else { return false }
+        let identifier = String(url.lastPathComponent.dropFirst(prefix.count))
+        return UUID(uuidString: identifier) != nil
     }
 
     static func remove(_ path: String?) {
@@ -2428,7 +2585,69 @@ enum DownloadTemporaryDirectory {
 
 enum DownloadLogPhase {
     static func isConverting(_ text: String) -> Bool {
-        text.contains("[VideoConvertor]") && text.contains("Converting video")
+        (text.contains("[VideoConvertor]") && text.contains("Converting video"))
+            || (text.contains("[DownlinkConvert]") && text.contains("Applying"))
+    }
+}
+
+enum DownloadFailureKind: Int, CaseIterable, Equatable {
+    case generic = 0
+    case output = 1
+    case encoder = 2
+    case storage = 3
+
+    static func detect(in text: String) -> DownloadFailureKind {
+        let diagnostic = text.lowercased()
+        if diagnostic.contains("[downlinkerror:storage]") { return .storage }
+        if diagnostic.contains("[downlinkerror:encoder]") { return .encoder }
+        if diagnostic.contains("[downlinkerror:output]") { return .output }
+        if ["no space left on device", "disk quota exceeded", "permission denied", "read-only file system"]
+            .contains(where: diagnostic.contains) {
+            return .storage
+        }
+        let videoToolboxFailed = diagnostic.contains("videotoolbox")
+            && (diagnostic.contains("error") || diagnostic.contains("failed"))
+        if videoToolboxFailed
+            || ["encoder not found", "error while opening encoder", "failed to initialise encoder", "failed to initialize encoder"]
+                .contains(where: diagnostic.contains) {
+            return .encoder
+        }
+        if ["could not write header", "not supported in container", "muxer does not support", "error opening output file", "error opening output files"]
+            .contains(where: diagnostic.contains) {
+            return .output
+        }
+        return .generic
+    }
+
+    func message(in language: AppLanguage) -> String {
+        switch (self, language) {
+        case (.generic, _):
+            return language.downloadFailed
+        case (.encoder, .english):
+            return "Video conversion failed. Try another format or quality."
+        case (.encoder, .simplifiedChinese):
+            return "视频转换失败，请尝试其他格式或画质。"
+        case (.encoder, .traditionalChinese):
+            return "影片轉換失敗，請嘗試其他格式或畫質。"
+        case (.encoder, .thai):
+            return "แปลงวิดีโอไม่สำเร็จ โปรดลองเลือกรูปแบบหรือความละเอียดอื่น"
+        case (.storage, .english):
+            return "Not enough storage or the file could not be written. Check the destination folder."
+        case (.storage, .simplifiedChinese):
+            return "存储空间不足或无法写入文件，请检查目标文件夹。"
+        case (.storage, .traditionalChinese):
+            return "儲存空間不足或無法寫入檔案，請檢查目的地資料夾。"
+        case (.storage, .thai):
+            return "พื้นที่จัดเก็บไม่เพียงพอหรือไม่สามารถเขียนไฟล์ได้ โปรดตรวจสอบโฟลเดอร์ปลายทาง"
+        case (.output, .english):
+            return "The selected streams could not be saved in this format. Try another format."
+        case (.output, .simplifiedChinese):
+            return "所选媒体流无法保存为此格式，请尝试其他格式。"
+        case (.output, .traditionalChinese):
+            return "所選媒體串流無法儲存為此格式，請嘗試其他格式。"
+        case (.output, .thai):
+            return "ไม่สามารถบันทึกสตรีมที่เลือกในรูปแบบนี้ได้ โปรดลองเลือกรูปแบบอื่น"
+        }
     }
 }
 
@@ -2443,8 +2662,12 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
     @Published var language: AppLanguage = .english {
         didSet {
             status = Self.translatedStatus(status, from: oldValue, to: language)
-            if userFacingErrorMessage == oldValue.downloadFailed {
-                userFacingErrorMessage = language.downloadFailed
+            if let failureKind = DownloadFailureKind.allCases.first(where: {
+                userFacingErrorMessage == $0.message(in: oldValue)
+            }) {
+                userFacingErrorMessage = failureKind.message(in: language)
+            } else if userFacingErrorMessage == oldValue.missingConverter {
+                userFacingErrorMessage = language.missingConverter
             }
             if logText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || logText == oldValue.initialLog {
                 logText = language.initialLog
@@ -2498,6 +2721,8 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
     private var checkedPreviewImageURL: URL?
     private var checkedMediaFormatCatalog: MediaFormatCatalog?
     private var failedJobCount = 0
+    private var currentDownloadFailure = DownloadFailureKind.generic
+    private var downloadDiagnosticTail = ""
     private var cachedDependencyStatus: (status: DependencyStatus, resolvedAt: Date)?
     private lazy var directoryPanel = makeDirectoryPanel()
     private lazy var cookiesFilePanel = makeCookiesFilePanel()
@@ -2573,6 +2798,14 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
             selectedVideoHeight: selectedVideoQuality.height,
             includeVideoAudio: includeVideoAudio,
             videoFormat: videoFormat
+        )
+    }
+
+    var selectionUnavailableMessage: String? {
+        guard hasCheckedOptions, !currentSelectionIsFulfillable, kind == .video else { return nil }
+        return language.selectionUnavailable(
+            quality: selectedVideoQuality.label,
+            includeAudio: includeVideoAudio
         )
     }
 
@@ -2710,9 +2943,10 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
                 outputFormat: videoFormat,
                 includeAudio: includeVideoAudio
             )
-            if !availableVideoQualities.contains(selectedVideoQuality) {
-                selectedVideoQuality = availableVideoQualities.first ?? .best
-            }
+            selectedVideoQuality = VideoQualitySelection.afterRefresh(
+                current: selectedVideoQuality,
+                available: availableVideoQualities
+            )
         }
 
         let selection = selectedVideoStreamSelection
@@ -2944,7 +3178,9 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
                             outputFormat: self.videoFormat,
                             includeAudio: self.includeVideoAudio
                         )
-                        self.selectedVideoQuality = self.availableVideoQualities.first ?? .best
+                        self.selectedVideoQuality = VideoQualitySelection.initial(
+                            available: self.availableVideoQualities
+                        )
                     } else if self.kind == .audio {
                         self.checkedMediaFormatCatalog = catalog
                         self.availableVideoQualities = []
@@ -3031,6 +3267,16 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
             return
         }
 
+        let videoPluginDirectory = DownlinkPluginDirectory.resolve(ffmpegPath: ffmpegPath)
+        if kind == .video,
+           selectedVideoStreamSelection?.processingPlan.requiresPlugin == true,
+           videoPluginDirectory == nil {
+            appendLog("Missing required DownlinkConvert plugin.\n")
+            status = language.missingTools
+            userFacingErrorMessage = language.missingConverter
+            return
+        }
+
         isRunning = true
         isCancellationRequested = false
         status = language.downloading
@@ -3048,6 +3294,7 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
             let temporaryDirectory = kind == .image ? nil : DownloadTemporaryDirectory.make()
             var jobConfiguration = downloadConfiguration
             jobConfiguration.temporaryDirectory = temporaryDirectory
+            jobConfiguration.videoPluginDirectory = videoPluginDirectory
             return DownloadJob(
                 url: url,
                 kind: kind,
@@ -3199,6 +3446,8 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
         etaLabel = "--"
         downloadedLabel = "--"
         resetTransferEstimates()
+        currentDownloadFailure = .generic
+        downloadDiagnosticTail = ""
         status = "\(language.downloading) \(job.index)/\(job.total)"
         appendLog("\n[\(job.index)/\(job.total)] \(job.url)\n")
         return true
@@ -3220,9 +3469,9 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
             etaLabel = "--"
             failedJobCount += 1
             status = language.error
-            userFacingErrorMessage = language.downloadFailed
+            userFacingErrorMessage = currentDownloadFailure.message(in: language)
             appendLog("[\(job.index)/\(job.total)] Exit code: \(exitCode).\n")
-            if kind == .video || kind == .audio {
+            if currentDownloadFailure == .generic, (kind == .video || kind == .audio) {
                 checkedSignature = nil
                 linkScanState = .needsCheck(count: parsedURLs.count)
                 appendLog("The checked media format may no longer be available. Check the URL again before downloading.\n")
@@ -3499,7 +3748,13 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
 
     func consumeDownloaderOutput(_ text: String) {
         appendLog(text)
-        if DownloadLogPhase.isConverting(text), isRunning, !isCancellationRequested {
+        let diagnostic = downloadDiagnosticTail + text
+        downloadDiagnosticTail = String(diagnostic.suffix(512))
+        let detectedFailure = DownloadFailureKind.detect(in: diagnostic)
+        if detectedFailure.rawValue > currentDownloadFailure.rawValue {
+            currentDownloadFailure = detectedFailure
+        }
+        if DownloadLogPhase.isConverting(diagnostic), isRunning, !isCancellationRequested {
             status = language.converting
             progressFraction = min(progressFraction, 0.98)
             speedLabel = "0 KB/s"
@@ -5622,6 +5877,7 @@ struct RedesignedContentView: View {
                 .font(AppTypography.font(size: 20, weight: .semibold))
                 .foregroundStyle(warning)
                 .frame(width: 32)
+                .help(model.selectionUnavailableMessage ?? model.language.unavailable)
                 .id("selection-warning")
                 .transition(inputTrailingTransition)
         } else if model.linkScanState == .unavailable || model.linkScanState == .missingTools {
@@ -6042,7 +6298,8 @@ struct RedesignedContentView: View {
     }
 
     private var inputAccent: Color {
-        switch model.linkScanState {
+        if model.selectionUnavailableMessage != nil { return warning }
+        return switch model.linkScanState {
         case .ready:
             ready
         case .checking:
@@ -6055,7 +6312,8 @@ struct RedesignedContentView: View {
     }
 
     private var inputBorderWidth: CGFloat {
-        switch model.linkScanState {
+        if model.selectionUnavailableMessage != nil { return 1.4 }
+        return switch model.linkScanState {
         case .ready, .checking, .unavailable, .missingTools:
             1.4
         case .empty, .needsCheck:
@@ -6077,7 +6335,8 @@ struct RedesignedContentView: View {
     }
 
     private var statusIcon: String {
-        switch model.linkScanState {
+        if model.selectionUnavailableMessage != nil { return "exclamationmark.triangle" }
+        return switch model.linkScanState {
         case .empty:
             "link"
         case .needsCheck:
@@ -6092,6 +6351,7 @@ struct RedesignedContentView: View {
     }
 
     private var statusText: String {
+        if let message = model.selectionUnavailableMessage { return message }
         switch model.linkScanState {
         case .empty:
             return model.language.pasteLinkStatus
@@ -6121,7 +6381,8 @@ struct RedesignedContentView: View {
     }
 
     private var statusColor: Color {
-        switch model.linkScanState {
+        if model.selectionUnavailableMessage != nil { return warning }
+        return switch model.linkScanState {
         case .ready:
             ready
         case .unavailable, .missingTools:
@@ -6134,6 +6395,7 @@ struct RedesignedContentView: View {
     }
 
     private var shouldShowLinkStatusLine: Bool {
+        if model.selectionUnavailableMessage != nil { return true }
         switch model.linkScanState {
         case .unavailable, .missingTools:
             return true
