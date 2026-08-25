@@ -833,7 +833,7 @@ final class DownloadCommandBuilderTests: XCTestCase {
         XCTAssertTrue(arguments.contains("--no-update"))
     }
 
-    func testYouTubeCommandsUseAndroidVRPlayerClientOnly() {
+    func testYouTubeCommandsKeepDefaultPlayerSelection() {
         let configuration = DownloadConfiguration(
             kind: .audio,
             videoFormat: .mp4,
@@ -847,7 +847,6 @@ final class DownloadCommandBuilderTests: XCTestCase {
             outputDirectory: "/tmp/downlink",
             outputTemplate: "%(title)s.%(ext)s"
         )
-        let playerClient = "youtube:player_client=android_vr"
         let youtubeDownloadArguments = DownloadCommandBuilder.arguments(
             for: "https://youtu.be/example",
             ffmpegPath: "/opt/homebrew/bin/ffmpeg",
@@ -857,17 +856,9 @@ final class DownloadCommandBuilderTests: XCTestCase {
             for: "https://youtu.be/example",
             configuration: configuration
         )
-        let otherDownloadArguments = DownloadCommandBuilder.arguments(
-            for: "https://example.com/audio",
-            ffmpegPath: "/opt/homebrew/bin/ffmpeg",
-            configuration: configuration
-        )
-
         for arguments in [youtubeDownloadArguments, youtubeScanArguments] {
-            let extractorArgumentsIndex = arguments.firstIndex(of: "--extractor-args")
-            XCTAssertEqual(extractorArgumentsIndex.map { arguments[$0 + 1] }, playerClient)
+            XCTAssertFalse(arguments.contains("--extractor-args"))
         }
-        XCTAssertFalse(otherDownloadArguments.contains(playerClient))
     }
 
     func testVideoScanDoesNotPreselectQuality() {

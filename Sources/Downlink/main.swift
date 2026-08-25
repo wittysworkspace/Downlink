@@ -740,16 +740,6 @@ enum InstagramURLDetector {
     }
 }
 
-enum YouTubeURLDetector {
-    static func isYouTubeURL(_ rawURL: String) -> Bool {
-        guard let host = URLComponents(string: rawURL)?.host?.lowercased() else {
-            return false
-        }
-
-        return host == "youtu.be" || host == "youtube.com" || host.hasSuffix(".youtube.com")
-    }
-}
-
 enum CookiePickerVisibility {
     static func shouldShow(for text: String) -> Bool {
         text
@@ -1751,7 +1741,6 @@ enum DownloadCommandBuilder {
         }
 
         appendCookieArguments(to: &args, configuration: configuration, url: url)
-        appendYouTubePlayerClientArguments(to: &args, url: url)
 
         switch configuration.kind {
         case .video:
@@ -1882,7 +1871,6 @@ enum DownloadCommandBuilder {
         ]
 
         appendCookieArguments(to: &args, configuration: configuration, url: url)
-        appendYouTubePlayerClientArguments(to: &args, url: url)
 
         switch configuration.kind {
         case .video:
@@ -1905,11 +1893,6 @@ enum DownloadCommandBuilder {
         guard !cookieFilePath.isEmpty else { return }
         args.append("--cookies")
         args.append(cookieFilePath)
-    }
-
-    private static func appendYouTubePlayerClientArguments(to args: inout [String], url: String) {
-        guard YouTubeURLDetector.isYouTubeURL(url) else { return }
-        args.append(contentsOf: ["--extractor-args", "youtube:player_client=android_vr"])
     }
 
     static func normalizedURLString(_ rawURL: String) -> String {

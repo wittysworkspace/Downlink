@@ -6,7 +6,7 @@ Downlink is distributed under the MIT License. Some release builds include third
 
 - Project: yt-dlp
 - Website: https://github.com/yt-dlp/yt-dlp
-- Version bundled in the current macOS release: 2026.06.09
+- Version bundled in the current macOS release: 2026.08.19
 - License: The Unlicense, with additional notices for bundled executable dependencies as described by the yt-dlp project
 - Source code: https://github.com/yt-dlp/yt-dlp
 - License file: https://github.com/yt-dlp/yt-dlp/blob/master/LICENSE
