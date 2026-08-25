@@ -7,7 +7,7 @@ private let appDisplayName = "Downlink"
 private let appVersion = AppMetadata.version
 
 enum AppMetadata {
-    static let version = "26.0"
+    static let version = "26.1"
 }
 
 enum AppMotionTransitionStyle: Equatable {

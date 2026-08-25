@@ -28,7 +28,7 @@ final class DownloadCommandBuilderTests: XCTestCase {
     }
 
     func testAppVersionUsesCalendarYearTwentySix() {
-        XCTAssertEqual(AppMetadata.version, "26.0")
+        XCTAssertEqual(AppMetadata.version, "26.1")
     }
 
     func testProductMotionUsesFastStateTransitions() {
@@ -1635,8 +1635,8 @@ final class DownloadCommandBuilderTests: XCTestCase {
             .appendingPathComponent("scripts/build_app.sh")
         let script = try String(contentsOf: scriptURL, encoding: .utf8)
 
-        XCTAssertTrue(script.contains("APP_VERSION=\"26.0\""))
-        XCTAssertTrue(script.contains("APP_BUILD=\"2600\""))
+        XCTAssertTrue(script.contains("APP_VERSION=\"26.1\""))
+        XCTAssertTrue(script.contains("APP_BUILD=\"2601\""))
         XCTAssertTrue(script.contains("Vendor/plugins"))
         XCTAssertTrue(script.contains("$RESOURCES_DIR/plugins"))
         XCTAssertTrue(script.contains("cp -L"))
