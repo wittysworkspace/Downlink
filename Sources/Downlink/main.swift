@@ -323,6 +323,15 @@ enum AppLanguage: String, CaseIterable, Identifiable {
         }
     }
 
+    var convertingDetail: String {
+        switch self {
+        case .english: return "Re-encoding video, this can take several minutes"
+        case .simplifiedChinese: return "正在重新编码视频，可能需要几分钟"
+        case .traditionalChinese: return "正在重新編碼影片，可能需要幾分鐘"
+        case .thai: return "กำลังเข้ารหัสวิดีโอใหม่ อาจใช้เวลาหลายนาที"
+        }
+    }
+
     var finished: String {
         switch self {
         case .english: return "Finished"
@@ -2588,6 +2597,24 @@ enum DownloadLogPhase {
         (text.contains("[VideoConvertor]") && text.contains("Converting video"))
             || (text.contains("[DownlinkConvert]") && text.contains("Applying"))
     }
+
+    /// Latest `[DownlinkConvert] Progress 42.5% ETA 0:01:23` report in `text`.
+    static func conversionProgress(in text: String) -> (fraction: Double, eta: String?)? {
+        let pattern = #"\[DownlinkConvert\] Progress (\d+(?:\.\d+)?)%(?: ETA (\d+:\d{2}:\d{2}))?"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).last,
+              let percentRange = Range(match.range(at: 1), in: text),
+              let percent = Double(text[percentRange]) else {
+            return nil
+        }
+        var eta: String?
+        if let etaRange = Range(match.range(at: 2), in: text) {
+            var parts = text[etaRange].split(separator: ":").map(String.init)
+            if parts.first == "0" { parts.removeFirst() }
+            eta = parts.joined(separator: ":")
+        }
+        return (min(max(percent / 100, 0), 1), eta)
+    }
 }
 
 enum DownloadFailureKind: Int, CaseIterable, Equatable {
@@ -2696,6 +2723,8 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
     @Published var progressFraction = 0.0
     @Published var speedLabel = "0 KB/s"
     @Published var etaLabel = "--"
+    @Published var convertingStartDate: Date?
+    @Published var convertingProgress: Double?
     @Published var downloadedLabel = "--"
     @Published var linkScanState: LinkScanState = .empty
     @Published var mediaSummary: MediaSummary?
@@ -3759,6 +3788,17 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
             progressFraction = min(progressFraction, 0.98)
             speedLabel = "0 KB/s"
             etaLabel = "--"
+            if convertingStartDate == nil {
+                convertingStartDate = Date()
+            }
+        }
+        if convertingStartDate != nil, isRunning, !isCancellationRequested,
+           let progress = DownloadLogPhase.conversionProgress(in: text) {
+            convertingProgress = progress.fraction
+            progressFraction = progress.fraction
+            if let eta = progress.eta {
+                etaLabel = eta
+            }
         }
     }
 
@@ -3800,6 +3840,8 @@ final class DownloadModel: ObservableObject, @unchecked Sendable {
     }
 
     private func resetTransferEstimates() {
+        convertingStartDate = nil
+        convertingProgress = nil
         currentJobStartDate = Date()
         currentDownloadedBytes = nil
         currentTotalBytes = nil
@@ -5395,13 +5437,23 @@ struct RedesignedContentView: View {
 
                 Spacer()
 
-                Text(progressDetail)
-                    .font(AppTypography.font(size: AppTypography.secondarySize, weight: .medium))
-                    .foregroundStyle(secondary)
-                    .lineLimit(1)
+                if let convertingStart = convertingStartDate, model.convertingProgress == nil {
+                    TimelineView(.periodic(from: convertingStart, by: 1)) { context in
+                        Text(convertingDetail(since: convertingStart, now: context.date))
+                            .font(AppTypography.font(size: AppTypography.secondarySize, weight: .medium))
+                            .foregroundStyle(secondary)
+                            .lineLimit(1)
+                    }
+                } else {
+                    Text(progressDetail)
+                        .font(AppTypography.font(size: AppTypography.secondarySize, weight: .medium))
+                        .foregroundStyle(secondary)
+                        .lineLimit(1)
+                }
             }
 
-            if model.linkScanState == .checking {
+            if model.linkScanState == .checking
+                || (convertingStartDate != nil && model.convertingProgress == nil) {
                 ProgressView()
                     .progressViewStyle(.linear)
                     .tint(accent)
@@ -5411,6 +5463,16 @@ struct RedesignedContentView: View {
                     .tint(accent)
             }
         }
+    }
+
+    private var convertingStartDate: Date? {
+        model.isRunning && model.userFacingErrorMessage == nil ? model.convertingStartDate : nil
+    }
+
+    private func convertingDetail(since start: Date, now: Date) -> String {
+        let elapsed = max(Int(now.timeIntervalSince(start)), 0)
+        let clock = String(format: "%d:%02d", elapsed / 60, elapsed % 60)
+        return "\(model.language.convertingDetail) · \(clock)"
     }
 
     private var progressTitle: String {
@@ -5435,6 +5497,9 @@ struct RedesignedContentView: View {
         }
 
         let percent = "\(Int(model.displayedProgress * 100))%"
+        if model.convertingProgress != nil {
+            return "\(percent) · \(model.etaLabel)"
+        }
         return "\(percent) · \(model.speedLabel) · \(model.etaLabel)"
     }
 

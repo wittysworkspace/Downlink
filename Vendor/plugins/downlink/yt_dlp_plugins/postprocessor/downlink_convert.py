@@ -1,6 +1,10 @@
 import os
+import re
+import subprocess
+import threading
+import time
 
-from yt_dlp.postprocessor.ffmpeg import FFmpegPostProcessor
+from yt_dlp.postprocessor.ffmpeg import FFmpegPostProcessor, FFmpegPostProcessorError
 from yt_dlp.utils import PostProcessingError, prepend_extension, replace_extension
 
 
@@ -30,6 +34,7 @@ class DownlinkConvertPP(FFmpegPostProcessor):
         if audio_action not in self._AUDIO_ACTIONS:
             raise PostProcessingError(f"Unsupported Downlink audio action: {audio_action}")
 
+        self._duration = None
         self.container = container
         self.video_action = video_action
         self.video_bitrate = self._positive_int(video_bitrate, "video bitrate")
@@ -92,7 +97,7 @@ class DownlinkConvertPP(FFmpegPostProcessor):
                 "-allow_sw",
                 "1",
                 "-prio_speed",
-                "0",
+                "1",
                 "-spatial_aq",
                 "1",
                 "-b:v:0",
@@ -118,6 +123,97 @@ class DownlinkConvertPP(FFmpegPostProcessor):
             options.extend(["-c:s", "mov_text"])
 
         return options
+
+    @staticmethod
+    def _format_clock(seconds):
+        seconds = max(int(seconds), 0)
+        return f"{seconds // 3600}:{seconds % 3600 // 60:02d}:{seconds % 60:02d}"
+
+    def _report_progress(self, out_seconds, speed):
+        duration = self._duration
+        if not duration:
+            return
+        fraction = min(max(out_seconds / duration, 0.0), 1.0)
+        message = f"Progress {fraction * 100:.1f}%"
+        if speed and speed > 0:
+            message += f" ETA {self._format_clock((duration - out_seconds) / speed)}"
+        self.to_screen(message)
+
+    def real_run_ffmpeg(self, input_path_opts, output_path_opts, *, expected_retcodes=(0,)):
+        """Run ffmpeg like yt-dlp does, but stream `-progress` output for the UI."""
+        self.check_version()
+
+        cmd = [self.executable, "-y", "-loglevel", "repeat+info", "-nostats", "-progress", "pipe:1"]
+        for kind, path_opts in (("i", input_path_opts), ("o", output_path_opts)):
+            for index, (path, opts) in enumerate(path_opts, start=1):
+                if not path:
+                    continue
+                args = list(opts)
+                if kind == "i" and self.video_action == "hevc":
+                    # Hardware decode is best effort; ffmpeg falls back to software.
+                    args += ["-hwaccel", "videotoolbox"]
+                keys = [f"_{kind}{index}", f"_{kind}"]
+                if kind == "o":
+                    args += ["-movflags", "+faststart"]
+                    if index == 1:
+                        keys.append("")
+                args += self._configuration_args(self.basename, keys)
+                if kind == "i":
+                    args.append("-i")
+                cmd += args + [self._ffmpeg_filename_argument(path)]
+
+        self.write_debug(f"ffmpeg command line: {cmd}")
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            errors="replace",
+        )
+        stderr_lines = []
+
+        def drain_stderr():
+            for line in process.stderr:
+                stderr_lines.append(line)
+                if not self._duration:
+                    match = re.search(r"Duration: (\d+):(\d{2}):(\d{2}(?:\.\d+)?)", line)
+                    if match:
+                        hours, minutes, seconds = match.groups()
+                        self._duration = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+
+        stderr_thread = threading.Thread(target=drain_stderr, daemon=True)
+        stderr_thread.start()
+
+        out_seconds = 0.0
+        speed = None
+        last_report = 0.0
+        for line in process.stdout:
+            key, _, value = line.strip().partition("=")
+            if key in ("out_time_us", "out_time_ms"):
+                try:
+                    out_seconds = int(value) / 1_000_000
+                except ValueError:
+                    pass
+            elif key == "speed":
+                try:
+                    speed = float(value.rstrip("x"))
+                except ValueError:
+                    speed = None
+            elif key == "progress":
+                now = time.monotonic()
+                if value == "end" or now - last_report >= 1.0:
+                    last_report = now
+                    self._report_progress(out_seconds, speed)
+
+        returncode = process.wait()
+        stderr_thread.join()
+        stderr = "".join(stderr_lines)
+        if returncode not in expected_retcodes:
+            self.write_debug(stderr)
+            lines = stderr.strip().splitlines()
+            raise FFmpegPostProcessorError(lines[-1] if lines else f"ffmpeg exited with code {returncode}")
+        return stderr
 
     def _failure_kind(self, error):
         message = str(error).lower()
@@ -149,6 +245,7 @@ class DownlinkConvertPP(FFmpegPostProcessor):
         same_path = final_path == source_path
         converted_path = prepend_extension(final_path, "downlink.temp") if same_path else final_path
 
+        self._duration = info.get("duration")
         self.to_screen(
             f"Applying {self.container.upper()} codec policy; Destination: {final_path}"
         )
